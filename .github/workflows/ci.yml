@@ -2,8 +2,10 @@ name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -46,7 +48,9 @@ jobs:
           cache-dependency-path: age-app/go.sum
       - name: Validate workflow syntax and shell commands
         if: runner.os == 'Linux'
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 ../.github/workflows/ci.yml
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 ../.github/workflows/*.yml
+          shellcheck ../install.sh ../scripts/package-release.sh
       - name: Install locked dependencies and build browser assets
         run: |
           npm ci --ignore-scripts --no-audit --no-fund

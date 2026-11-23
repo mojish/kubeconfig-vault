@@ -113,6 +113,7 @@ func (s *service) serve() error {
 			}
 			defer clear(b)
 			var r request
+			defer func() { clear(r.RecoveryIdentity) }()
 			if decodeJSON(b, &r) != nil {
 				_ = json.NewEncoder(c).Encode(response{Error: "invalid local request"})
 				return
@@ -186,26 +187,64 @@ func absolute(path string) (string, error) {
 	}
 	return filepath.Abs(path)
 }
+
+func printPath(state string, args []string) error {
+	const usage = "usage: path kubeconfig|edit|vault"
+	if len(args) != 1 {
+		return errors.New(usage)
+	}
+	var name, missing string
+	switch args[0] {
+	case "kubeconfig":
+		name = filepath.Join(state, "current", "kubeconfig")
+		missing = "no generated kubeconfig; run import first"
+	case "edit":
+		name = filepath.Join(state, "edit", "kubeconfig")
+		missing = "no editable kubeconfig; run config unlock or check status for an interrupted edit"
+	case "vault":
+		name = filepath.Join(state, "current", "vault.age")
+		missing = "no encrypted vault; run import first"
+	default:
+		return errors.New(usage)
+	}
+	info, err := os.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.New(missing)
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("expected a regular file at the requested path")
+	}
+	_, err = fmt.Fprintln(os.Stdout, name)
+	return err
+}
+
+// Set from the release tag when packaging a binary.
+var version = "dev"
+
 func run(args []string) error {
 	f := flag.NewFlagSet("kube-unlock-age", flag.ContinueOnError)
 	f.SetOutput(os.Stderr)
-	state := f.String("state-dir", "", "separate age application state directory")
+	state := f.String("state-dir", "", "vault state directory (uses the platform default if omitted)")
 	seconds := f.Int("session-seconds", 3600, "absolute session lifetime (1–3600 seconds; new daemon only)")
 	browser := f.String("browser", "", "browser executable; default is open/xdg-open")
+	showVersion := f.Bool("version", false, "print the build version")
 	f.Usage = func() {
 		fmt.Fprintln(os.Stderr, `Kubeconfig Vault (experimental)
 Usage: kube-unlock-age [global options] COMMAND
 
 recovery-key new FILE                  Create a new private offline recovery key
 recovery-key public FILE               Print only its public recipient
-import SOURCE --recovery-key FILE      Enroll, encrypt, and verify a new vault
+import SOURCE                         Show a recovery key, then enroll and verify a vault
+import SOURCE --recovery-key FILE      Enroll and verify a vault using an existing recovery key
+path kubeconfig|edit|vault              Print the path to an existing file
 credential ID                         Kubernetes exec entry point (not for humans)
 unlock | lock | status | stop          Manage the one-hour credential session
 config unlock                         Create a plaintext file for normal editing
 config lock [--accept-connection-changes]  Validate, encrypt, verify, and delete edit
 config discard                        Delete the unsaved plaintext edit
 export NEW-FILE                        Fresh authentication; portable plaintext export
-recover VAULT.age --key FILE --out NEW-FILE  Offline portable plaintext recovery
+recover VAULT.age --out NEW-FILE       Paste your recovery key at a hidden prompt
+recover VAULT.age --key FILE --out NEW-FILE  Recover using a private key file
 serve                                 Foreground daemon for troubleshooting
 
 Global options must precede COMMAND. Import preserves the original source.
@@ -217,6 +256,10 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 			return nil
 		}
 		return errors.New("invalid command options")
+	}
+	if *showVersion {
+		fmt.Fprintln(os.Stdout, "kube-unlock-age", version)
+		return nil
 	}
 	a := f.Args()
 	if len(a) == 0 {
@@ -253,11 +296,17 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		}
 	}
 	if a[0] == "recover" {
-		if len(a) != 6 || a[2] != "--key" || a[4] != "--out" {
-			return errors.New("usage: recover VAULT.age --key FILE --out NEW-FILE")
-		}
-		if err := recoverFile(a[1], a[3], a[5]); err != nil {
-			return err
+		switch {
+		case len(a) == 4 && a[2] == "--out":
+			if err := recoverFromTerminal(a[1], a[3]); err != nil {
+				return err
+			}
+		case len(a) == 6 && a[2] == "--key" && a[4] == "--out":
+			if err := recoverFile(a[1], a[3], a[5]); err != nil {
+				return err
+			}
+		default:
+			return errors.New("usage: recover VAULT.age [--key FILE] --out NEW-FILE")
 		}
 		fmt.Fprintln(os.Stdout, "Portable plaintext config recovered to the selected file.")
 		return nil
@@ -277,6 +326,9 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	*state, err = filepath.Abs(*state)
 	if err != nil {
 		return errors.New("invalid state directory")
+	}
+	if a[0] == "path" {
+		return printPath(*state, a[1:])
 	}
 	if err = privateDir(*state); err != nil {
 		return err
@@ -299,16 +351,29 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 			return errors.New("unexpected command argument")
 		}
 	case "import":
-		if len(a) != 4 || a[2] != "--recovery-key" {
-			return errors.New("usage: import SOURCE --recovery-key FILE")
+		if len(a) != 2 && (len(a) != 4 || a[2] != "--recovery-key") {
+			return errors.New("usage: import SOURCE [--recovery-key FILE]")
 		}
 		r.Path, err = absolute(a[1])
 		if err != nil {
 			return err
 		}
-		r.Recovery, err = absolute(a[3])
-		if err != nil {
-			return err
+		if len(a) == 4 {
+			r.Recovery, err = absolute(a[3])
+			if err != nil {
+				return err
+			}
+		} else {
+			// Validate before asking the user to save a key. The daemon checks
+			// again under its operation lock before touching the vault.
+			if _, err = s.prepareImport(r.Path); err != nil {
+				return err
+			}
+			r.RecoveryIdentity, err = showNewRecoveryKey()
+			if err != nil {
+				return err
+			}
+			defer clear(r.RecoveryIdentity)
 		}
 	case "export":
 		if len(a) != 2 {

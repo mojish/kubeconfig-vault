@@ -1,10 +1,38 @@
 # Development and testing
 
-Start with the [README](../README.md) to build the application. Run the following
-from `age-app` after installing dependencies and building the browser bundle:
+## Installation options
+
+`./install.sh` downloads and checks the latest published archive for your OS
+and CPU. The same installer works without a checkout when downloaded from the
+release. To install an archive you've already downloaded, put the archive and
+`SHA256SUMS` in the same directory and run:
 
 ```sh
+sh install.sh --from-dir "$HOME/Downloads"
+```
+
+For a source build or when no release is published, clone this repo and run
+`./install.sh --source`. It checks `age-app/go.mod` before installing npm packages.
+You need Go 1.26.11 or newer and Node.js 22.12 or newer. With an older bootstrap
+Go that supports automatic toolchains, `GOTOOLCHAIN=auto ./install.sh --source`
+allows Go to download the required version. A final argument selects a custom
+install directory. Use the same directory for upgrades.
+
+The macOS binaries are experimental and have not been notarized by Apple.
+If [Gatekeeper](https://support.apple.com/en-us/102445) blocks a download, build
+from source. The hosted checks run the packaged CLI; desktop browser launch
+and physical YubiKey testing on macOS remain separate checks.
+
+## Build and test locally
+
+For development, build and test in `age-app`.
+
+```sh
+cd age-app
+npm ci --ignore-scripts --no-audit --no-fund
+npm run build:web
 go mod download
+go build -o kube-unlock-age .
 go test -race ./...
 go vet ./...
 npm run test:ui
@@ -13,7 +41,8 @@ npm run audit:security
 ```
 
 The browser test uses isolated Chrome with virtual FIDO2, real kubectl, and a
-local HTTPS API. It needs Chrome, kubectl, and OpenSSL. Set
+local HTTPS API. It needs Chrome, kubectl, OpenSSL, and Python 3.9 or newer for
+the pseudo-terminal test of the displayed and pasted synthetic key. Set
 `KUBE_UNLOCK_TEST_CHROME` or `KUBE_UNLOCK_TEST_KUBECTL` to override the executables.
 The optional Freelens proxy check uses `KUBE_UNLOCK_TEST_FREELENS_PROXY` or the
 installed Linux proxy. All tests use synthetic credentials and disposable state.
@@ -32,7 +61,8 @@ permissions, and no configured secrets. Dependabot proposes dependency updates.
 
 ## Test with a physical YubiKey
 
-Build `kube-unlock-age` in `age-app`, then run from that directory:
+Build `kube-unlock-age` in `age-app` using the commands above, then run from that
+directory:
 
 ```sh
 npm run test:physical -- --preflight-only
@@ -62,7 +92,35 @@ entry in `edit_paths`. Preserve any changes you want in a private file. Then run
 and save again. `config discard` deletes both the edit and the interrupted-save
 copy. Ordinary lock and stop preserve them.
 
-For offline recovery, follow the [README](../README.md#recover-offline). If you
+For offline recovery, follow the [README](../README.md#back-up-and-recover). If you
 replace a lost YubiKey, import the recovered plaintext into a new state directory
 with the replacement key and verify it before switching clients. Select the new
 state directory with `--state-dir PATH` before the `import` command.
+
+For an upgrade, stop the helper with `kube-unlock-age stop` using the same
+`--state-dir` as your import if you chose a custom one. Run the installer again
+with the same destination so the generated kubeconfig keeps working.
+
+## Prepare a release
+
+On Linux, build release assets into a new directory without creating a tag:
+
+```sh
+./scripts/package-release.sh v0.1.0 /tmp/kubeconfig-vault-release
+sh install.sh --from-dir /tmp/kubeconfig-vault-release /tmp/kubeconfig-vault-bin
+/tmp/kubeconfig-vault-bin/kube-unlock-age --version
+```
+
+The [release workflow](../.github/workflows/release.yml) runs for version tags
+such as `v0.1.0`. It runs the regular CI suite, makes four tarballs, and tests
+the exact archives by installing them and running `--version` on Ubuntu and
+macOS on x86-64 and ARM64. After success it checks the complete checksum
+manifest, attaches GitHub build attestations, and creates a draft release.
+A maintainer reviews and publishes the draft.
+
+For provenance beyond the installer's checksum check, use GitHub CLI to verify a
+downloaded archive against the repository's build attestation:
+
+```sh
+gh attestation verify kubeconfig-vault-linux-amd64.tar.gz --repo mojish/kubeconfig-vault
+```

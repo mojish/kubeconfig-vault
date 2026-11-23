@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: age-app/package-lock.json
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: age-app/go.mod
+          cache-dependency-path: age-app/go.sum
+      - name: Package the four targets
+        run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/kcv-release"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/kcv-release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  smoke:
+    name: Install release (${{ matrix.runner }})
+    needs: package
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/kcv-release/
+      - name: Verify and run the packaged executable
+        shell: bash
+        run: |
+          sh "$RUNNER_TEMP/kcv-release/install.sh" --from-dir "$RUNNER_TEMP/kcv-release" "$RUNNER_TEMP/kcv bin"
+          version=$("$RUNNER_TEMP/kcv bin/kube-unlock-age" --version)
+          test "$version" = "kube-unlock-age $GITHUB_REF_NAME"
+
+  draft:
+    needs: [test, smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/kcv-release/
+      - name: Verify all assets against the manifest
+        working-directory: ${{ runner.temp }}/kcv-release
+        run: sha256sum -c SHA256SUMS
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/kcv-release/kubeconfig-vault-*.tar.gz
+            ${{ runner.temp }}/kcv-release/install.sh
+            ${{ runner.temp }}/kcv-release/SHA256SUMS
+      - name: Create a draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/kcv-release/* \
+            --draft --verify-tag --title "Kubeconfig Vault $GITHUB_REF_NAME" \
+            --notes "Experimental binaries for Linux and macOS on x86-64 and ARM64. See the README for installation, compatibility, and security boundaries."

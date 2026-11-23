@@ -20,9 +20,13 @@ const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
 let acceptedToken = tokenA, server, failure;
 const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },120000);
 
-function launch(args, extra = {}) {
-  const p = spawn(executable, ["--state-dir",state,"--browser",launcher,...args],{stdio:["ignore","pipe","pipe"],...extra});
-  children.push(p);let stdout="",stderr="";const result={done:false,child:p};
+function launch(args, { terminal = false, ...extra } = {}) {
+  const command = [executable, "--state-dir", state, "--browser", launcher, ...args];
+  // Capture the synthetic key in a disposable pseudo-terminal. Never print the transcript.
+  const terminalCommand = ["python3", "-c", "import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))", ...command];
+  const [program, ...argv] = terminal ? terminalCommand : command;
+  const p = spawn(program, argv, {stdio:[terminal ? "pipe" : "ignore","pipe","pipe"],...extra});
+  children.push(p);let stdout="",stderr="";const result={done:false,child:p,get output(){return stdout}};
   p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);
   result.promise = new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;result.code=code;result.stdout=stdout;result.stderr=stderr;resolve(result)})});
   return result;
@@ -53,9 +57,26 @@ try {
   await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
   const sourceObject={apiVersion:"v1",kind:"Config",clusters:[{name:"synthetic",cluster:{server:`https://127.0.0.1:${server.address().port}`,"certificate-authority-data":certificate.toString("base64")}}],users:[{name:"synthetic",user:{token:tokenA}}],contexts:[{name:"synthetic",context:{cluster:"synthetic",user:"synthetic"}}],"current-context":"synthetic"};
   const original=JSON.stringify(sourceObject,null,2);await writeFile(source,original,{mode:0o600});
+  const missingConfig = await launch(["path", "kubeconfig"]).promise;
+  assert.equal(missingConfig.code, 1);
+  assert.equal(missingConfig.stdout, "");
+  assert.match(missingConfig.stderr, /run import first/);
+  await assert.rejects(stat(state), { code: "ENOENT" });
   const daemon=spawn(executable,["--state-dir",state,"--browser",launcher,"serve"],{stdio:["ignore","ignore","pipe"]});children.push(daemon);let daemonLog="";daemon.stderr.on("data",b=>daemonLog+=b);
   await waitFor(async()=>{try{return(await stat(join(state,"session.sock"))).isSocket()}catch{return false}},"private daemon socket");
-  await cli("recovery-key","new",recovery);assert.equal((await stat(recovery)).mode&0o777,0o600);
+  const nonInteractive = await launch(["import", source], { detached: true }).promise;
+  assert.equal(nonInteractive.code, 1);
+  assert.match(nonInteractive.stderr, /terminal is required/);
+  const abandoned = launch(["import", source], { terminal: true });
+  await waitFor(() => abandoned.output.includes("Press Enter to show it"), "recovery reveal prompt");
+  assert.ok(!abandoned.output.includes("AGE-SECRET-KEY-"));
+  abandoned.child.stdin.write("\n");
+  await waitFor(() => abandoned.output.includes("Type saved"), "recovery confirmation prompt");
+  assert.deepEqual(await urls(), []);
+  abandoned.child.stdin.end("cancel\n");
+  assert.equal((await abandoned.promise).code, 1);
+  await assert.rejects(stat(join(state, "current")), { code: "ENOENT" });
+  assert.deepEqual(await urls(), []);
   const {call:cdp,events}=chromeConnection(join(root,"chrome"),children);
   const {targetId}=await cdp("Target.createTarget",{url:"about:blank"});
   const {sessionId}=await cdp("Target.attachToTarget",{targetId,flatten:true});
@@ -75,16 +96,27 @@ try {
     return await operation.promise;
   }
   async function successful(operation){const r=await complete(operation);if(r.code!==0)throw new Error("Synthetic browser/CLI operation failed: "+r.stderr);return r}
-  await successful(launch(["import",source,"--recovery-key",recovery]));
+  const importing = launch(["import", source], { terminal: true });
+  await waitFor(() => importing.output.includes("Press Enter to show it"), "recovery reveal prompt");
+  importing.child.stdin.write("\n");
+  await waitFor(() => importing.output.includes("Type saved"), "recovery confirmation prompt");
+  const savedKey = importing.output.match(/\bAGE-SECRET-KEY-[A-Z0-9-]+\b/)?.[0];
+  assert.ok(savedKey, "No synthetic recovery key was shown");
+  assert.deepEqual(await urls(), []);
+  importing.child.stdin.end("saved\n");
+  await successful(importing);
+  await assert.rejects(stat(recovery), { code: "ENOENT" });
   for(const step of ["Step 1 of 3","Step 2 of 3","Step 3 of 3"])assert.ok(visibleSteps.has(step),"Missing enrollment progress step");
   assert.equal(await readFile(source,"utf8"),original);
-  const initialGeneration=await readFile(join(state,"current","vault.age"));
+  const generatedConfig = (await cli("path", "kubeconfig")).trimEnd();
+  const encryptedVault = (await cli("path", "vault")).trimEnd();
+  const initialGeneration=await readFile(encryptedVault);
   assert.ok(initialGeneration.subarray(0,22).toString().startsWith("age-encryption.org/v1"));
-  assert.ok(!(await readFile(join(state,"current","kubeconfig"),"utf8")).includes(tokenA));
-  console.log("PASS: HTTP browser enrollment, age import, YubiKey and recovery verification, original source preserved.");
+  assert.ok(!(await readFile(generatedConfig,"utf8")).includes(tokenA));
+  console.log("PASS: single-command import confirms recovery backup before opening the browser, verifies both recipients, and preserves the source.");
 
   const kube=()=>{
-    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--kubeconfig",join(state,"current","kubeconfig"),"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:join(state,"current","kubeconfig")},stdio:["ignore","pipe","pipe"]});
+    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--kubeconfig",generatedConfig,"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:generatedConfig},stdio:["ignore","pipe","pipe"]});
     children.push(p);let stdout="",stderr="";const result={done:false};p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);result.promise=new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;Object.assign(result,{code,stdout,stderr});resolve(result)})});return result;
   };
   const before=(await urls()).length,first=kube(),second=kube();
@@ -106,7 +138,8 @@ try {
   }else console.log("SKIP: Freelens proxy executable unavailable; no GUI compatibility claim.");
 
   await successful(launch(["config","unlock"]));
-  const edit=JSON.parse(await cli("status")).edit_path;
+  const edit = (await cli("path", "edit")).trimEnd();
+  assert.equal(edit, JSON.parse(await cli("status")).edit_path);
   assert.equal(await readFile(edit,"utf8"),original);
   const locked=JSON.parse(await cli("lock"));assert.equal(locked.fully_locked,false);assert.equal(locked.edit_open,true);
   await writeFile(edit,"not: [valid",{mode:0o600});
@@ -115,6 +148,9 @@ try {
   sourceObject.users[0].user.token=tokenB;await writeFile(edit,JSON.stringify(sourceObject,null,2),{mode:0o600});
   await successful(launch(["config","lock"]));acceptedToken=tokenB;
   assert.equal(await stat(edit).catch(()=>false),false);assert.equal(JSON.parse(await cli("status")).fully_locked,true);
+  const closedEdit = await launch(["path", "edit"]).promise;
+  assert.equal(closedEdit.code, 1);
+  assert.equal(closedEdit.stdout, "");
   assert.notDeepEqual(await readFile(join(state,"current","vault.age")),initialGeneration);
   assert.equal((await successful(kube())).code,0);
   console.log("PASS: fresh edit authentication, visible plaintext state, failed-save preservation, verified encrypted save and cache invalidation.");
@@ -142,7 +178,16 @@ try {
   await successful(kube());console.log("PASS: elapsed session expires and the next kubectl invocation requires fresh browser authentication.");
 
   await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:authenticator.authenticatorId});
-  const recovered=join(root,"recovered");await cli("recover",join(state,"current","vault.age"),"--key",recovery,"--out",recovered);
+  const recovered = join(root, "recovered");
+  const restoring = launch(["recover", encryptedVault, "--out", recovered], { terminal: true });
+  await waitFor(() => restoring.output.includes("input is hidden"), "hidden recovery prompt");
+  restoring.child.stdin.end(savedKey + "\r");
+  assert.equal((await restoring.promise).code, 0, "Pasted recovery key did not unlock synthetic vault");
+  assert.ok(!restoring.output.includes(savedKey), "Recovery prompt echoed the pasted key");
+  await writeFile(recovery, savedKey + "\n", { mode: 0o600 });
+  const fileRecovered = join(root, "file-recovered");
+  await cli("recover", encryptedVault, "--key", recovery, "--out", fileRecovered);
+  assert.ok((await readFile(fileRecovered, "utf8")).includes(tokenB));
   assert.ok((await readFile(recovered,"utf8")).includes(tokenB));
   const publicMetadata=await readFile(join(state,"current","metadata.json"),"utf8");assert.ok(!publicMetadata.includes(await readFile(recovery,"utf8")));
   console.log("PASS: offline recovery with all authenticators removed; new portable plaintext file only.");
@@ -152,7 +197,7 @@ try {
   assert.ok(requests.every(r=>r.url.startsWith("http://localhost:")||launches.has(r.url)));
   const httpText=JSON.stringify(requests),recoveryText=(await readFile(recovery,"utf8")).trim();
   assert.ok(!httpText.includes(tokenA)&&!httpText.includes(tokenB)&&!httpText.includes(recoveryText));
-  assert.ok(!daemonLog.includes(tokenA)&&!daemonLog.includes(tokenB)&&!daemonLog.includes("DATA RACE"));
+  assert.ok(!daemonLog.includes(tokenA)&&!daemonLog.includes(tokenB)&&!daemonLog.includes(recoveryText)&&!daemonLog.includes("DATA RACE"));
   for(const name of await readdir(join(state,"generations"))){for(const file of ["vault.age","metadata.json","kubeconfig"]){const data=await readFile(join(state,"generations",name,file));assert.ok(!data.includes(tokenA)&&!data.includes(tokenB)&&!data.includes(recoveryText))}}
   await cli("stop");await once(short,"exit");
   console.log("PASS: local assets only; no Kubernetes token or private recovery key in browser HTTP or persistent generations.");

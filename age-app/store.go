@@ -277,6 +277,13 @@ func readRecovery(path string) (*age.HybridIdentity, error) {
 		return nil, err
 	}
 	defer clear(b)
+	return parseRecovery(b)
+}
+
+func parseRecovery(b []byte) (*age.HybridIdentity, error) {
+	if len(b) > 16384 {
+		return nil, errors.New("recovery key is too long")
+	}
 	i, err := age.ParseHybridIdentity(strings.TrimSpace(string(b)))
 	if err != nil {
 		return nil, errors.New("invalid hybrid age recovery identity")

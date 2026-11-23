@@ -18,12 +18,13 @@ import (
 )
 
 type request struct {
-	Op       string   `json:"op"`
-	Path     string   `json:"path,omitempty"`
-	Recovery string   `json:"recovery,omitempty"`
-	ID       string   `json:"id,omitempty"`
-	Cluster  *cluster `json:"cluster,omitempty"`
-	Accept   bool     `json:"accept,omitempty"`
+	Op               string   `json:"op"`
+	Path             string   `json:"path,omitempty"`
+	Recovery         string   `json:"recovery,omitempty"`
+	RecoveryIdentity []byte   `json:"recovery_identity,omitempty"`
+	ID               string   `json:"id,omitempty"`
+	Cluster          *cluster `json:"cluster,omitempty"`
+	Accept           bool     `json:"accept,omitempty"`
 }
 type response struct {
 	Error  string `json:"error,omitempty"`
@@ -229,7 +230,7 @@ func (s *service) open(ctx context.Context, title string) (*payload, *snapshot, 
 }
 
 func samePayload(a, b *payload) bool { return reflect.DeepEqual(a, b) }
-func (s *service) importConfig(ctx context.Context, r request) (any, error) {
+func (s *service) prepareImport(source string) (*payload, error) {
 	id, err := currentID(s.state)
 	if err != nil {
 		return nil, err
@@ -237,16 +238,28 @@ func (s *service) importConfig(ctx context.Context, r request) (any, error) {
 	if id != "" {
 		return nil, errors.New("this state directory already has a vault; choose a new directory")
 	}
-	data, err := readBounded(r.Path, maxSource, false)
+	data, err := readBounded(source, maxSource, false)
 	if err != nil {
 		return nil, err
 	}
 	defer clear(data)
-	p, err := prepare(data, filepath.Dir(r.Path), s.state, s.executable, nil)
+	return prepare(data, filepath.Dir(source), s.state, s.executable, nil)
+}
+
+func (s *service) importConfig(ctx context.Context, r request) (any, error) {
+	p, err := s.prepareImport(r.Path)
 	if err != nil {
 		return nil, err
 	}
-	recovery, err := readRecovery(r.Recovery)
+	var recovery *age.HybridIdentity
+	if len(r.RecoveryIdentity) != 0 {
+		if r.Recovery != "" {
+			return nil, errors.New("select one recovery key source")
+		}
+		recovery, err = parseRecovery(r.RecoveryIdentity)
+	} else {
+		recovery, err = readRecovery(r.Recovery)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -448,11 +461,15 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 }
 
 func recoverFile(cipherPath, keyPath, out string) error {
-	cipher, err := readBounded(cipherPath, maxVault, false)
+	key, err := readRecovery(keyPath)
 	if err != nil {
 		return err
 	}
-	key, err := readRecovery(keyPath)
+	return recoverWithKey(cipherPath, out, key)
+}
+
+func recoverWithKey(cipherPath, out string, key *age.HybridIdentity) error {
+	cipher, err := readBounded(cipherPath, maxVault, false)
 	if err != nil {
 		return err
 	}

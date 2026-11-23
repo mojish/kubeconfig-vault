@@ -2,6 +2,8 @@
 
 ## Options
 
+`--version` prints the packaged release version. Source builds report `dev`.
+
 Defaults are `~/.local/share/kube-unlock-age` on Linux and
 `~/Library/Application Support/kube-unlock-age` on macOS. `--state-dir` selects a
 private directory; Unix socket limits also constrain its path length.
@@ -17,7 +19,9 @@ and follow their redirect to localhost. No launch capability appears in argument
 | --- | --- |
 | `recovery-key new FILE` | Exclusive private hybrid age identity file; no secret stdout |
 | `recovery-key public FILE` | Public recipient only |
-| `import SOURCE --recovery-key FILE` | New two-recipient vault verified before commit |
+| `import SOURCE` | Display a recovery key in the terminal, confirm backup, then enroll and verify the vault |
+| `import SOURCE --recovery-key FILE` | Enroll and verify the vault using an existing private key file |
+| `path kubeconfig` / `path edit` / `path vault` | Print only the absolute path to the selected file |
 | `status` | JSON session state, expiry, primary `edit_path`, all `edit_paths`, and `fully_locked` |
 | `unlock` | Fresh browser authentication and an absolute credential session |
 | `lock` / `stop` | Cancel authentication and clear cache; stop also exits daemon |
@@ -25,9 +29,16 @@ and follow their redirect to localhost. No launch capability appears in argument
 | `config lock [--accept-connection-changes]` | Validate, encrypt, verify, commit, delete edit |
 | `config discard` | Delete normal and interrupted-save edits and clear cache |
 | `export NEW-FILE` | Fresh authentication and portable plaintext export |
-| `recover VAULT.age --key FILE --out NEW-FILE` | Offline recovery from standalone ciphertext |
+| `recover VAULT.age --out NEW-FILE` | Offline recovery. Paste the key at a hidden terminal prompt. |
+| `recover VAULT.age --key FILE --out NEW-FILE` | Offline recovery using an existing private key file |
 | `credential ID` | ExecCredential v1 JSON, bounded by session/token expiry |
 | `serve` | Foreground daemon for troubleshooting |
+
+Interactive import shows the key only when requested. Type `saved` to start
+enrollment. Without a controlling terminal, use `--recovery-key FILE` for import
+or `--key FILE` for recovery. Commands that use file paths never put the key in
+their arguments. `path` needs no daemon or browser and fails if the requested
+file is absent. An interrupted edit is listed by `status`, not selected by `path edit`.
 
 ## Supported kubeconfig inputs
 

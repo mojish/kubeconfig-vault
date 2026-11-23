@@ -10,9 +10,13 @@ recipient operations. Browser assets are bundled and embedded in the binary.
 
 Every generation uses a fresh age file key with two recipients: a WebAuthn PRF
 credential and a hybrid age offline recovery recipient. Only the recovery public
-recipient persists in state. The private recovery identity is created in an
-explicitly selected, exclusive mode-0600 file and never printed. Keep it separately
-offline: it can decrypt without the YubiKey. Back up the entire state directory,
+recipient persists in state. Interactive import displays the private identity
+through the controlling terminal after an explicit reveal. After backup
+confirmation the CLI passes it over the private, peer-checked Unix socket for
+verification. It does not write it to a file, standard output, or the browser.
+The optional `recovery-key new` command creates a private file with mode 0600.
+Keep the identity separately because it can decrypt without the YubiKey.
+Back up the entire state directory,
 including Typage's nonsecret identity string needed to select a non-discoverable
 credential, as well as the independent recovery key.
 
