@@ -65,6 +65,10 @@ try {
   await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
   const sourceObject={apiVersion:"v1",kind:"Config",clusters:[{name:"synthetic",cluster:{server:`https://127.0.0.1:${server.address().port}`,"certificate-authority-data":certificate.toString("base64")}}],users:[{name:"synthetic",user:{token:tokenA}}],contexts:[{name:"synthetic",context:{cluster:"synthetic",user:"synthetic"}}],"current-context":"synthetic",preferences:{colors:true}};
   const original=JSON.stringify(sourceObject,null,2);await writeFile(source,original,{mode:0o600});
+  const fresh = JSON.parse(await cli("status", "--json"));
+  assert.equal(fresh.configured, false);
+  assert.equal(fresh.helper_running, false);
+  await assert.rejects(stat(state), {code:"ENOENT"});
   const missingConfig = await launch(["path", "kubeconfig"]).promise;
   assert.equal(missingConfig.code, 1);
   assert.equal(missingConfig.stdout, "");
@@ -254,6 +258,11 @@ try {
   const restoredProjection=await readFile(join(state,"current","kubeconfig"),"utf8");
   assert.ok(restoredProjection.includes(state) && restoredProjection.includes(relocated));
   console.log("PASS: restored backup rebuilds paths for a new installation.");
+  const absentClient = join(root,"new-client");
+  await cli("config","link","--kubeconfig",absentClient);
+  assert.match(await cli("setup", absentClient), /Already set up/);
+  await cli("config","unlink","--kubeconfig",absentClient);
+  await assert.rejects(stat(absentClient), {code:"ENOENT"});
   const editor=join(root,"fixture-editor");
   await writeFile(editor,"#!/bin/sh\nexit 0\n",{mode:0o700});
   await successful(launch(["config","edit"],{env:{...process.env,VISUAL:editor}}));

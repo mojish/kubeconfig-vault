@@ -32,8 +32,15 @@ func privateDir(path string) error {
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return errors.New("cannot create private directory")
 	}
+	return checkPrivateDir(path)
+}
+
+func checkPrivateDir(path string) error {
 	s, err := os.Lstat(path)
-	if err != nil || !s.IsDir() || s.Mode().Perm()&0077 != 0 {
+	if err != nil {
+		return err
+	}
+	if !s.IsDir() || s.Mode().Perm()&0077 != 0 {
 		return errors.New("directory must be private (0700) and not a symlink")
 	}
 	var st unix.Stat_t

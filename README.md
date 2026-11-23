@@ -47,6 +47,9 @@ original, and switches the client file. Repeat setup to resume. When upgrading
 from v0.1.1, run setup to convert a regular plaintext rollback copy using your
 existing vault and key.
 
+Running `kubeconfig-vault status` before enrollment reports that setup is needed.
+It can also check a stopped vault without starting the helper.
+
 ## Everyday use
 
 | To | Run |

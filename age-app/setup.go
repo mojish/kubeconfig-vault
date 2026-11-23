@@ -98,6 +98,27 @@ func withClientLocks(alias, entry string, change func() error) error {
 func (s *service) receipt(entry string) string {
 	return filepath.Join(s.state, fmt.Sprintf("rollback-%x.sha256", sha256.Sum256([]byte(entry))))
 }
+
+const noOriginalReceipt = "no-original-v1\n"
+
+func (s *service) linkReceipt(entry string) (present, noOriginal bool, err error) {
+	path := s.receipt(entry)
+	present, err = existsEntry(path)
+	if err != nil || !present {
+		return
+	}
+	data, err := readBounded(path, 64, true)
+	if err != nil {
+		return true, false, err
+	}
+	if string(data) == noOriginalReceipt {
+		return true, true, nil
+	}
+	if len(data) != sha256.Size {
+		return true, false, errors.New("invalid rollback receipt; client preserved")
+	}
+	return true, false, nil
+}
 func (s *service) verifyReceipt(entry string, cipher []byte) error {
 	data, err := readBounded(s.receipt(entry), 64, true)
 	want := sha256.Sum256(cipher)
@@ -149,6 +170,30 @@ func (s *service) setup(ctx context.Context, r request) (any, error) {
 		return nil, errors.New("an unrelated original backup exists beside this file; setup made no changes")
 	}
 	source := path
+	_, noOriginal, err := s.linkReceipt(path)
+	if err != nil {
+		return nil, err
+	}
+	if noOriginal {
+		sealed, err := existsEntry(path + sealedSuffix)
+		if err != nil {
+			return nil, err
+		}
+		if sealed || oldBackup || id == "" {
+			return nil, errors.New("client path conflicts with its no-original receipt; client preserved")
+		}
+		if linked {
+			return "Already set up.", nil
+		}
+		exists, err := existsEntry(path)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, errors.New("unfinished attachment: run config link --kubeconfig FILE to attach, or config unlink --kubeconfig FILE to clear the receipt")
+		}
+		return nil, errors.New("client file replaced the managed link; file and receipt preserved")
+	}
 	if linked {
 		if !oldBackup {
 			cipher, err := readBounded(path+sealedSuffix, maxVault, true)
@@ -351,6 +396,9 @@ func (s *service) undoSetup(ctx context.Context, alias string) (any, error) {
 		current, err := readBounded(sealed, maxVault, true)
 		if err != nil || !bytes.Equal(current, cipher) {
 			return errors.New("encrypted backup changed")
+		}
+		if err := s.verifyReceipt(path, current); err != nil {
+			return err
 		}
 		if err := replaceClient(path, p.Source, ""); err != nil {
 			return err

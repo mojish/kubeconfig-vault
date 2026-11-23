@@ -107,14 +107,20 @@ func (s *service) clientLink(action string, args []string) error {
 	if err != nil {
 		return err
 	}
-	record, err := existsEntry(s.receipt(entry))
+	record, noOriginal, err := s.linkReceipt(entry)
 	if err != nil {
 		return err
 	}
-	if record && !sealed {
+	if noOriginal && sealed {
+		return errors.New("encrypted rollback conflicts with its receipt; client preserved")
+	}
+	if record && !noOriginal && !sealed {
 		return errors.New("the encrypted rollback is missing; client preserved")
 	}
 	if action == "unlink" && sealed {
+		if !record {
+			return errors.New("encrypted rollback has no receipt; client and backup preserved")
+		}
 		if !s.isLinked(entry) {
 			return errors.New("file is not linked to this vault; encrypted backup preserved")
 		}
@@ -129,14 +135,22 @@ func (s *service) clientLink(action string, args []string) error {
 			return errors.New("an encrypted rollback already exists; client path is missing")
 		}
 		if exists {
+			if noOriginal && !s.isLinked(entry) {
+				return errors.New("client file replaced the managed link; file and receipt preserved")
+			}
 			if s.isLinked(entry) && !sealed {
 				legacy, err := existsEntry(entry + configBackupSuffix)
 				if err != nil {
 					return err
 				}
-				if !legacy {
+				switch {
+				case legacy && noOriginal:
+					return errors.New("legacy backup conflicts with the no-original receipt; client and backup preserved")
+				case noOriginal:
 					fmt.Fprintln(os.Stdout, "Already linked.")
 					return nil
+				case !legacy:
+					return errors.New("original backup and receipt are both missing; locate the original or inspect the managed link before detaching it")
 				}
 			}
 			return s.clientAction(request{Op: "setup", Path: path, Accept: true})
@@ -148,18 +162,28 @@ func (s *service) clientLink(action string, args []string) error {
 		if err != nil || actual != entry {
 			return errors.New("client path changed; retry")
 		}
+		// Re-read the receipt inside both client locks, including on retry after a crash.
+		record, noOriginal, err := s.linkReceipt(entry)
+		if err != nil {
+			return err
+		}
+		if record && !noOriginal {
+			return errors.New("rollback receipt requires the encrypted original; client preserved")
+		}
 		if action == "unlink" {
-			if !s.isLinked(entry) {
-				return errors.New("client file is not linked to this vault")
-			}
 			if present, err := existsEntry(entry + sealedSuffix); err != nil || present {
 				return errors.New("rollback changed; retry unlink")
 			}
-			return restoreConfigLink(entry, entry+configBackupSuffix)
+			return s.unlinkWithoutCipher(entry, noOriginal)
 		}
 		for _, suffix := range []string{"", configBackupSuffix, sealedSuffix} {
 			if present, err := existsEntry(entry + suffix); err != nil || present {
 				return errors.New("client file or rollback already exists")
+			}
+		}
+		if !noOriginal {
+			if err := publishNew(s.receipt(entry), []byte(noOriginalReceipt)); err != nil {
+				return err
 			}
 		}
 		if err := os.Symlink(filepath.Join(s.state, "current", "kubeconfig"), entry); err != nil {
@@ -167,4 +191,50 @@ func (s *service) clientLink(action string, args []string) error {
 		}
 		return syncDir(filepath.Dir(entry))
 	})
+}
+
+// Run under the alias and entry locks. A missing legacy backup alone never
+// authorizes removal of a client link, even if it disappeared during restore.
+func (s *service) unlinkWithoutCipher(entry string, noOriginal bool) error {
+	legacy, err := existsEntry(entry + configBackupSuffix)
+	if err != nil {
+		return err
+	}
+	if !noOriginal {
+		if !legacy {
+			return errors.New("original backup and receipt are both missing; locate the original or inspect the managed link before detaching it")
+		}
+		if !s.isLinked(entry) {
+			return errors.New("client file is not linked to this vault")
+		}
+		return restoreLegacyConfigLink(entry)
+	}
+	if legacy {
+		return errors.New("legacy backup conflicts with the no-original receipt; client and backup preserved")
+	}
+	exists, err := existsEntry(entry)
+	if err != nil {
+		return err
+	}
+	if exists {
+		if !s.isLinked(entry) {
+			return errors.New("client file is not linked to this vault")
+		}
+		if err := os.Remove(entry); err != nil {
+			return err
+		}
+	}
+	// If removal finished before a crash, retry from here and clear the
+	// receipt only after the missing client entry is durable.
+	if err := syncDir(filepath.Dir(entry)); err != nil {
+		return err
+	}
+	if err := os.Remove(s.receipt(entry)); err != nil {
+		return err
+	}
+	if err := syncDir(s.state); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "Detached %s. It had no original file.\n", entry)
+	return nil
 }

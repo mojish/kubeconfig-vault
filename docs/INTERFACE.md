@@ -32,7 +32,7 @@ and follow their redirect to localhost. No launch capability appears in argument
 | `import [SOURCE]` | Import from `~/.kube/config` by default, confirm recovery backup, then enroll and verify the vault |
 | `import SOURCE --recovery-key FILE` | Enroll and verify the vault using an existing private key file |
 | `path kubeconfig` / `path edit` / `path vault` | Print only the absolute path to the selected file |
-| `status [--json]` | Human-readable session state on a terminal, JSON when piped or requested. JSON includes session state, expiry, primary `edit_path`, all `edit_paths`, and `fully_locked` |
+| `status [--json]` | Passive status, including `configured` and `helper_running`. Human-readable session state on a terminal, JSON when piped or requested. JSON includes session state, expiry, primary `edit_path`, all `edit_paths`, and `fully_locked` |
 | `unlock` | Fresh browser authentication and an absolute credential session |
 | `lock` / `stop` | Cancel authentication and clear cache; stop also exits daemon |
 | `config unlock` | Fresh authentication and a plaintext edit file |
@@ -95,7 +95,18 @@ for the link to affect it.
 Setup and link store the original as `FILE.before-kubeconfig-vault.age`. A private
 receipt in the vault directory records its digest and resolved client path. Keep
 both for authenticated unlink. A missing or substituted backup stops restoration.
-An initially absent client entry has no rollback copy and unlink removes the link.
+
+If the client path was empty, `config link` records that fact before creating
+its symlink. `config unlink` can then remove the symlink and its receipt.
+After an interruption that leaves only the receipt, repeat `config link` to
+attach the client or `config unlink` to finish detaching it. A replacement
+client file or conflicting backup is preserved.
+
+Older releases created some symlinks without a receipt. If both the receipt
+and original backup are missing, Vault keeps the symlink because it cannot
+tell whether a backup was lost. Locate the original backup first. If you
+independently know that the client path was originally empty, you can remove
+just the managed symlink and run `config link` again to record that fact.
 
 For multiple files in `KUBECONFIG`, pass one path to setup. Use
 `config unlink --kubeconfig FILE` for a file selected explicitly. With a single

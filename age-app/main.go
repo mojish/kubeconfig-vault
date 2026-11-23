@@ -133,11 +133,13 @@ func (s *service) serve() error {
 	}
 }
 
-func (s *service) connect() (*net.UnixConn, error) {
-	c, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: s.socket(), Net: "unix"})
+func (s *service) connect(deadline time.Time) (*net.UnixConn, error) {
+	dialer := net.Dialer{Deadline: deadline}
+	conn, err := dialer.Dial("unix", s.socket())
 	if err != nil {
 		return nil, err
 	}
+	c := conn.(*net.UnixConn)
 	if !samePeer(c) {
 		c.Close()
 		return nil, errors.New("unexpected daemon owner")
@@ -145,7 +147,7 @@ func (s *service) connect() (*net.UnixConn, error) {
 	return c, nil
 }
 func (s *service) rpc(r request) (json.RawMessage, error) {
-	c, err := s.connect()
+	c, err := s.connect(time.Time{})
 	if err != nil {
 		cmd := exec.Command(s.executable, "--state-dir", s.state, "--session-seconds", fmt.Sprint(int(s.ttl.Seconds())), "--browser", s.browser, "serve")
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
@@ -155,7 +157,7 @@ func (s *service) rpc(r request) (json.RawMessage, error) {
 		go func() { _ = cmd.Wait() }()
 		for i := 0; i < 100; i++ {
 			time.Sleep(30 * time.Millisecond)
-			c, err = s.connect()
+			c, err = s.connect(time.Time{})
 			if err == nil {
 				break
 			}
@@ -164,8 +166,14 @@ func (s *service) rpc(r request) (json.RawMessage, error) {
 			return nil, errors.New("daemon did not start; run serve in the foreground for the reason")
 		}
 	}
+	return exchangeRPC(c, r, time.Now().Add(16*time.Minute))
+}
+
+func exchangeRPC(c *net.UnixConn, r request, deadline time.Time) (json.RawMessage, error) {
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(16 * time.Minute))
+	if err := c.SetDeadline(deadline); err != nil {
+		return nil, err
+	}
 	if json.NewEncoder(c).Encode(r) != nil {
 		return nil, errors.New("cannot send local request")
 	}
@@ -343,6 +351,13 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	if a[0] == "path" {
 		return printPath(*state, a[1:])
 	}
+	if a[0] == "status" {
+		if len(a) > 2 || len(a) == 2 && a[1] != "--json" {
+			return errors.New("usage: status [--json]")
+		}
+		s := &service{state: *state}
+		return s.printStatus(len(a) == 2 || !term.IsTerminal(int(os.Stdout.Fd())))
+	}
 	if err = privateDir(*state); err != nil {
 		return err
 	}
@@ -418,10 +433,6 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	}
 	r := request{Op: a[0]}
 	switch a[0] {
-	case "status":
-		if len(a) > 2 || len(a) == 2 && a[1] != "--json" {
-			return errors.New("usage: status [--json]")
-		}
 	case "lock", "stop", "unlock":
 		if len(a) != 1 {
 			return errors.New("unexpected command argument")
@@ -511,26 +522,7 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	if err != nil {
 		return err
 	}
-	if r.Op == "status" && len(a) == 1 && term.IsTerminal(int(os.Stdout.Fd())) {
-		var status struct {
-			Unlocked  bool
-			EditOpen  bool     `json:"edit_open"`
-			ExpiresAt string   `json:"expires_at"`
-			EditPaths []string `json:"edit_paths"`
-		}
-		if err := json.Unmarshal(result, &status); err != nil {
-			return err
-		}
-		if status.Unlocked {
-			fmt.Fprintln(os.Stdout, "Session unlocked until", status.ExpiresAt)
-		} else {
-			fmt.Fprintln(os.Stdout, "Session locked.")
-		}
-		if status.EditOpen {
-			fmt.Fprintln(os.Stdout, "Plaintext edit still open:", strings.Join(status.EditPaths, ", "))
-		}
-		return nil
-	}
+
 	fmt.Fprintln(os.Stdout, strings.TrimSpace(string(result)))
 	if r.Op == "import" && len(r.RecoveryIdentity) != 0 {
 		fmt.Fprintln(os.Stderr, "Vault created. Use config link to connect clients that use the default kubeconfig.")

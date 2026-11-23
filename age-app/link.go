@@ -23,24 +23,20 @@ func pathWithin(dir, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func restoreConfigLink(path, backup string) error {
+// Restore only the saved entry. If the backup disappears before the rename,
+// the rename fails and the client link stays in place.
+func restoreLegacyConfigLink(path string) error {
+	backup := path + configBackupSuffix
 	info, err := os.Lstat(backup)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		if err := os.Remove(path); err != nil {
-			return errors.New("could not remove the client kubeconfig link")
-		}
-		fmt.Fprintf(os.Stdout, "Removed %s. No local original was available to restore.\n", path)
-	case err != nil || (!info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0):
-		return errors.New("invalid client kubeconfig backup; no change made")
-	default:
-		if err := os.Rename(backup, path); err != nil {
-			return errors.New("could not restore the original client kubeconfig")
-		}
-		fmt.Fprintf(os.Stdout, "Restored %s\n", path)
+	if err != nil || (!info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0) {
+		return errors.New("legacy rollback is missing or invalid; client preserved")
+	}
+	if err := os.Rename(backup, path); err != nil {
+		return errors.New("could not restore the legacy backup; client preserved")
 	}
 	if err := syncDir(filepath.Dir(path)); err != nil {
-		return errors.New("kubeconfig link removed but directory sync failed")
+		return errors.New("legacy original restored, but directory sync failed")
 	}
+	fmt.Fprintf(os.Stdout, "Restored %s\n", path)
 	return nil
 }
