@@ -7,6 +7,7 @@ if [ "$#" -ne 2 ] || ! printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
 fi
 
 tag=$1
+case "$tag" in *[!v0-9.]*) exit 2 ;; esac
 repo=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 mkdir -- "$2"
 out=$(CDPATH='' cd -- "$2" && pwd)
@@ -34,7 +35,8 @@ for os in linux darwin; do
     done
 done
 
-cp "$repo/install.sh" "$out/install.sh"
+sed "s/^release_tag=''$/release_tag='$tag'/" "$repo/install.sh" > "$out/install.sh"
+chmod 755 "$out/install.sh"
 cd "$out"
 sha256sum install.sh kubeconfig-vault-*.tar.gz > SHA256SUMS
 printf 'Release assets prepared in %s\n' "$out"

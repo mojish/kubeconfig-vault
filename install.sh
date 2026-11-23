@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# The release packager fills this in before generating SHA256SUMS.
+release_tag=''
+
 usage() {
     printf 'Usage: %s [--source | --from-dir RELEASE_DIR] [BIN_DIRECTORY]\n' "$0"
     printf 'Install the latest published binary in ~/.local/bin by default.\n'
@@ -90,7 +93,21 @@ else
     asset="kubeconfig-vault-$os-$arch.tar.gz"
     if [ "$mode" = download ]; then
         require curl
-        base='https://github.com/mojish/kubeconfig-vault/releases/latest/download'
+        releases='https://github.com/mojish/kubeconfig-vault/releases'
+        if [ -z "$release_tag" ]; then
+            # A source checkout has no stamped tag. Resolve latest just once.
+            redirect=$(curl -fsS --proto '=https' --connect-timeout 15 \
+                -o /dev/null -w '%{redirect_url}' "$releases/latest") ||
+                fail 'Unable to look up the latest GitHub release.'
+            case "$redirect" in
+                "$releases/tag/"*) release_tag=${redirect#"$releases/tag/"} ;;
+                *) fail 'GitHub did not return a release tag.' ;;
+            esac
+        fi
+        case "$release_tag" in *[!v0-9.]*) fail 'Invalid GitHub release tag.' ;; esac
+        printf '%s\n' "$release_tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
+            fail 'Invalid GitHub release tag.'
+        base="$releases/download/$release_tag"
         for name in SHA256SUMS "$asset"; do
             code=0
             curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 \

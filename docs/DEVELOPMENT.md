@@ -4,7 +4,9 @@
 
 `./install.sh` downloads and checks the latest published archive for your OS
 and CPU. The same installer works without a checkout when downloaded from the
-release. To install an archive you've already downloaded, put the archive and
+release. A published installer fetches both the checksum manifest and archive
+from its embedded release tag. A checkout resolves GitHub's latest tag once.
+To install an archive you've already downloaded, put the archive and
 `SHA256SUMS` in the same directory and run:
 
 ```sh
@@ -37,6 +39,7 @@ go test -race ./...
 go vet ./...
 npm run test:ui
 npm run test:browser
+sh ../scripts/test-install.sh
 npm run audit:security
 ```
 
