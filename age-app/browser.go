@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"filippo.io/age"
@@ -62,6 +63,8 @@ type ceremony struct {
 	total         int
 	bootstrap     string
 	bootstrapOnce sync.Once
+	launchFailed  atomic.Bool
+	reached       atomic.Bool
 }
 
 func (c *ceremony) removeBootstrap() {
@@ -114,7 +117,12 @@ func newCeremony(parent context.Context, title, browser string, steps int) (*cer
 		cancel()
 		return nil, errors.New("cannot launch browser; set --browser to a browser executable")
 	}
-	go func() { _ = cmd.Wait() }()
+	go func() {
+		if err := cmd.Wait(); err != nil && !c.reached.Load() {
+			c.launchFailed.Store(true)
+			cancel()
+		}
+	}()
 	return c, nil
 }
 
@@ -136,6 +144,7 @@ func (c *ceremony) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Forbidden", 403)
 			return
 		}
+		c.reached.Store(true)
 		c.removeBootstrap()
 		b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32768))
 		if err != nil {
@@ -268,4 +277,11 @@ func (b browserKey) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
 		return nil, errors.New("browser unwrapping failed")
 	}
 	return r.FileKey, nil
+}
+
+func (c *ceremony) failure(err error) error {
+	if c.launchFailed.Load() {
+		return errors.New("browser launcher exited before opening the page; stop the helper and retry with --browser PATH")
+	}
+	return err
 }

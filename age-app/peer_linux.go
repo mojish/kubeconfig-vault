@@ -20,3 +20,7 @@ func samePeer(c *net.UnixConn) bool {
 	})
 	return err == nil && ok
 }
+
+func renameNew(src, dst string) error {
+	return unix.Renameat2(unix.AT_FDCWD, src, unix.AT_FDCWD, dst, unix.RENAME_NOREPLACE)
+}

@@ -53,20 +53,24 @@ func showNewRecoveryKey() ([]byte, error) {
 }
 
 func recoverFromTerminal(cipherPath, out string) error {
-	tty, err := recoveryTerminal("--key")
-	if err != nil {
-		return err
-	}
-	defer tty.Close()
-	secret, err := readHiddenRecoveryKey(tty)
-	if err != nil && !errors.Is(err, term.ErrPasteIndicator) {
-		return errors.New("cannot read recovery key from the terminal")
-	}
-	key, err := parseRecovery([]byte(secret))
+	key, err := promptRecoveryKey()
 	if err != nil {
 		return err
 	}
 	return recoverWithKey(cipherPath, out, key)
+}
+
+func promptRecoveryKey() (*age.HybridIdentity, error) {
+	tty, err := recoveryTerminal("--key")
+	if err != nil {
+		return nil, err
+	}
+	defer tty.Close()
+	secret, err := readHiddenRecoveryKey(tty)
+	if err != nil && !errors.Is(err, term.ErrPasteIndicator) {
+		return nil, errors.New("cannot read recovery key from the terminal")
+	}
+	return parseRecovery([]byte(secret))
 }
 
 func readHiddenRecoveryKey(tty *os.File) (string, error) {

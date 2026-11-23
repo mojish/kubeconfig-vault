@@ -1,122 +1,96 @@
 # Kubeconfig Vault
 
-Unlock an existing Kubernetes token with your YubiKey. The first `kubectl`
-request opens a local browser page. After you approve it, commands share an
-unlocked session for up to one hour. Your cluster keeps using its existing token.
+Use your YubiKey to unlock an existing Kubernetes bearer token on your laptop.
+Run kubectl or open Freelens as usual. The first request opens a local browser
+page. After you approve it, both clients can share the session for up to one
+hour. Your cluster continues to validate the same token.
 
-This experimental tool is for kubeconfigs with **inline bearer tokens** and
-verified HTTPS endpoints. If your kubeconfig uses a login plugin (`exec`), a
-client certificate, or a token file, use your existing setup. See the
-[supported inputs](docs/INTERFACE.md#supported-kubeconfig-inputs).
+For Linux and macOS. Setup supports kubeconfigs with inline bearer tokens and
+verified HTTPS. See [compatibility](#compatibility) for tested configurations.
 
-## 1. Install
+## Install and set up
 
-Install the [latest release](https://github.com/mojish/kubeconfig-vault/releases/latest)
-on Linux or macOS. The installer chooses the x86-64 or ARM64 binary, checks its
-SHA-256, and installs it in `~/.local/bin`. Go and Node.js are only needed for
-source builds.
+Download the [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest) installer:
 
 ```sh
 curl -fL -o install.sh https://github.com/mojish/kubeconfig-vault/releases/latest/download/install.sh &&
-    sh install.sh
+  sh install.sh
 ```
 
-If you already cloned the repo, run `./install.sh` from its root. For offline
-installation, a source build, or macOS download restrictions, see the
-[installation options](docs/DEVELOPMENT.md#installation-options).
-
-For the steps below, you need `kubectl` and a browser and security key that
-support WebAuthn PRF. Chrome with a USB YubiKey passed on Linux. You can start
-with a [dummy hardware test](docs/DEVELOPMENT.md#test-with-a-physical-yubikey).
+Close any editors writing your kubeconfig, then run:
 
 ```sh
-vault="$HOME/.local/bin/kube-unlock-age"
-"$vault" --version
+kube-unlock-age setup
 ```
 
-Run the next blocks in the same terminal. In another terminal, set `$vault`
-again. Keep the binary at this path because the generated kubeconfig points to it.
-The import and link steps below require v0.1.1 or newer.
+If the shell cannot find the command, use `~/.local/bin/kube-unlock-age setup`.
+Setup uses `~/.kube/config` or the single file selected by `KUBECONFIG`. For
+a list of files, choose one with `kube-unlock-age setup FILE`. For an existing
+symlink, setup prints the target it will replace. All aliases to that target
+will use the vault.
 
-## 2. Import once and save the recovery key
+1. Reveal your offline recovery key in the terminal and save it separately.
+   Type `saved` once you have a copy. Your terminal and clipboard may retain it.
+2. Complete the three numbered steps in the browser with your security key.
+   Enter its PIN in the browser's security-key prompt.
+3. Run a familiar read-only kubectl command or reconnect in Freelens.
+   Clients already reading the selected file pick up the vault through that path.
 
-```sh
-"$vault" import
-```
+Setup verifies both decryption methods, saves an encrypted copy of your exact
+original, and switches the client file. Repeat setup to resume. For an existing
+v0.1.1 install, run `kube-unlock-age stop` before upgrading, then run setup.
+It can convert a regular plaintext rollback copy using the existing vault and key.
 
-This reads `~/.kube/config` and leaves it in place. If yours lives elsewhere,
-pass its path after `import`.
+## Everyday use
 
-1. Press Enter when the terminal offers to show your recovery key.
-2. Copy the key into a password manager you can access separately from this
-   laptop, or store it on an encrypted drive. Then type `saved` and press Enter.
-3. Complete the numbered steps in the browser. Choose the USB key, and enter
-   its PIN only in the browser's security key prompt.
+| To | Run |
+| --- | --- |
+| Edit in your normal editor | `kube-unlock-age config edit` |
+| See the session and open edits | `kube-unlock-age status` |
+| End the helper session early | `kube-unlock-age lock` |
+| Undo setup and restore the original plaintext file | `kube-unlock-age config unlink` |
 
-The recovery key is a backup for a lost YubiKey. Anyone with the key and the
-vault file can decrypt it, so display it in a private terminal. Terminal
-scrollback and clipboard history may retain a copy. The app creates the vault
-only after verifying both ways of decrypting it. If enrollment fails before
-the vault is created, retry import and save the new key it shows.
-
-## 3. Keep using kubectl and Freelens as usual
-
-```sh
-"$vault" config link && kubectl get namespaces
-```
-
-Use any read operation you already have permission to run. `config link` points
-`~/.kube/config` at a token-free file that calls the vault when a client needs a
-token. kubectl and Freelens can keep reading the same path. The first request
-opens the browser and later requests reuse the unlocked session.
-
-The original is saved as `~/.kube/config.before-kubeconfig-vault`. Run
-`"$vault" config unlink` to restore it. **The backup still grants access.**
-After verifying vault access and recovery, protect it separately.
-
-If `KUBECONFIG` or a Freelens profile already points somewhere else, that client
-will keep using its configured file. See [custom client paths](docs/INTERFACE.md#client-kubeconfig-link).
-
-## Edit or lock the vault
-
-```sh
-"$vault" config unlock && edit_file=$("$vault" path edit) && nano "$edit_file"
-```
-
-Replace `nano` with your preferred editor. Save and close the editor before
-running `"$vault" config lock` to validate, encrypt, and verify the change.
-The editable copy is plaintext, so disable editor backups and autosave copies.
-Keep client settings pointed at the generated config from step 3.
-Reconnect in Freelens to pick up saved changes if your current connection still
-has the previous token cached.
-
-Use `"$vault" lock` to clear the session. It preserves any unfinished edit.
-See [interrupted edits](docs/DEVELOPMENT.md#interrupted-edits) for how to resume
-or discard one. Locking cannot revoke tokens already delivered to clients.
+Editing creates a private plaintext file. Set `VISUAL` or `EDITOR` to an editor
+that waits until you close the file. Disable editor backups for sensitive files.
+If validation fails, the edit is retained. The [CLI reference](docs/INTERFACE.md)
+covers resuming edits, reviewing changes to connection settings, and custom paths.
+Locking preserves open edits. Kubernetes clients may continue using a token
+they already received.
 
 ## Back up and recover
 
-Run `"$vault" path vault` to find the encrypted file and copy it to a backup.
-Store your recovery key separately. To check recovery, put the backup file
-at an accessible path and choose a new output filename.
+Save the encrypted backup somewhere separate from the laptop, and store the
+recovery key separately from that backup. Use a new filename for each backup.
 
 ```sh
-"$vault" recover "$HOME/Downloads/vault.age" --out "$HOME/kubeconfig-recovered"
+kube-unlock-age backup cluster-backup.age
+kube-unlock-age recover cluster-backup.age --check
 ```
 
-Replace the input path with your backup's location. Paste the recovery key at
-the hidden prompt and press Enter. Recovery works offline without a browser
-or YubiKey. The output is a plaintext kubeconfig. Keep it private.
+The check asks for the recovery key in a hidden terminal prompt and verifies
+that the backup contains a usable config. On a new laptop, install the helper,
+bring your trusted backup and recovery key, then run:
 
-## Compatibility and security
+```sh
+kube-unlock-age restore cluster-backup.age
+kube-unlock-age config link
+```
 
-- Linux has passed physical YubiKey tests with dummy data. Apple Silicon and
-  Intel macOS have native CI coverage. Mac browser and physical key testing
-  are pending. See the [CI runs](https://github.com/mojish/kubeconfig-vault/actions).
-- This protects stored credentials on a trusted laptop. Keep existing plaintext
-  configs and their backups protected separately. Protect or remove them only
-  after you have verified both vault access and recovery.
-- The project uses age and Typage WebAuthn PRF and is awaiting independent
-  review. See the [architecture and security boundaries](docs/ARCHITECTURE.md).
+Restore enrolls a security key and rebuilds client paths for this laptop.
+For an offline plaintext export without a YubiKey, run
+`kube-unlock-age recover cluster-backup.age --out recovered-config`.
+Treat that output as a live credential.
 
-[Development and tests](docs/DEVELOPMENT.md) · [CLI reference](docs/INTERFACE.md) · [MIT License](LICENSE)
+## Compatibility
+
+| Environment | Evidence |
+| --- | --- |
+| Linux, Chrome, USB YubiKey | Physical enrollment, unlock, cached access and offline recovery with synthetic credentials |
+| Linux, kubectl and Freelens | Automated kubectl and Freelens proxy integration. Earlier Freelens 2.1.0 GUI qualification with an isolated profile |
+| macOS, Apple Silicon and Intel | Native build, test and package checks. Physical USB key and Freelens GUI qualification pending |
+
+Use a browser and authenticator that support WebAuthn PRF. The binaries and
+browser support are experimental. The project awaits independent security
+review. See [security boundaries](docs/ARCHITECTURE.md),
+[private vulnerability reporting](SECURITY.md), and
+[development and platform tests](docs/DEVELOPMENT.md).

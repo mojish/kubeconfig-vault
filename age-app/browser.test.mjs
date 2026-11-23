@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, readlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
+import { mkdtemp, copyFile, readFile, readlink, symlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
 import https from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,14 +14,15 @@ import { chromeConnection } from "./test-support/cdp.mjs";
 
 const cwd = fileURLToPath(new URL(".", import.meta.url));
 const root = await mkdtemp(join(tmpdir(), "kua-"));
-const state = join(root, "state"), executable = join(root, "app"), launcher = join(root,"browser"), urlsFile = join(root,"urls");
+let state = join(root, "state");
+const executable = join(root, "app"), launcher = join(root,"browser"), urlsFile = join(root,"urls");
 const recovery = join(root,"offline-key"), source = join(root,"source"), children = [];
 const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
 let acceptedToken = tokenA, server, failure;
 const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },120000);
 
-function launch(args, { terminal = false, ...extra } = {}) {
-  const command = [executable, "--state-dir", state, "--browser", launcher, ...args];
+function launch(args, { terminal = false, program: cliProgram = executable, ...extra } = {}) {
+  const command = [cliProgram, "--state-dir", state, "--browser", launcher, ...args];
   // Capture the synthetic key in a disposable pseudo-terminal. Never print the transcript.
   const terminalCommand = ["python3", "-c", "import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))", ...command];
   const [program, ...argv] = terminal ? terminalCommand : command;
@@ -100,7 +101,9 @@ try {
     return await operation.promise;
   }
   async function successful(operation){const r=await complete(operation);if(r.code!==0)throw new Error("Synthetic browser/CLI operation failed: "+r.stderr);return r}
-  const importing = launch(["import", source], { terminal: true });
+  const clientAlias = join(root,"config-alias");
+  await symlink("source",clientAlias);
+  const importing = launch(["setup", clientAlias], { terminal: true });
   await waitFor(() => importing.output.includes("Press Enter to show it"), "recovery reveal prompt");
   importing.child.stdin.write("\n");
   await waitFor(() => importing.output.includes("Type saved"), "recovery confirmation prompt");
@@ -111,18 +114,21 @@ try {
   await successful(importing);
   await assert.rejects(stat(recovery), { code: "ENOENT" });
   for(const step of ["Step 1 of 3","Step 2 of 3","Step 3 of 3"])assert.ok(visibleSteps.has(step),"Missing enrollment progress step");
-  assert.equal(await readFile(source,"utf8"),original);
+  assert.equal(await readlink(clientAlias),"source");
   const generatedConfig = (await cli("path", "kubeconfig")).trimEnd();
   const encryptedVault = (await cli("path", "vault")).trimEnd();
   const initialGeneration=await readFile(encryptedVault);
   assert.ok(initialGeneration.subarray(0,22).toString().startsWith("age-encryption.org/v1"));
   const projection = await readFile(generatedConfig, "utf8");
   assert.ok(!projection.includes(tokenA) && !projection.includes("preferences:"));
-  console.log("PASS: single-command import confirms recovery backup before opening the browser, verifies both recipients, and preserves the source.");
+  console.log("PASS: setup verifies both recipients and switches the client after recovery confirmation.");
 
   await cli("config", "link", "--kubeconfig", source);
   assert.equal(await readlink(source), generatedConfig);
-  assert.equal(await readFile(source + ".before-kubeconfig-vault", "utf8"), original);
+  const rollback = source + ".before-kubeconfig-vault.age";
+  assert.deepEqual(await readFile(rollback), initialGeneration);
+  await assert.rejects(stat(source + ".before-kubeconfig-vault"), {code:"ENOENT"});
+  assert.match(await cli("setup",source),/Already set up/);
 
   const kube=()=>{
     const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:source},stdio:["ignore","pipe","pipe"]});
@@ -186,6 +192,47 @@ try {
   await successful(kube());await delay(1300);assert.equal(JSON.parse(await cli("status")).unlocked,false);
   await successful(kube());console.log("PASS: elapsed session expires and the next kubectl invocation requires fresh browser authentication.");
 
+  const backup = join(root,"separate-backup.age");
+  await cli("backup",backup);
+  await writeFile(recovery,savedKey+"\n",{mode:0o600});
+  assert.match(await cli("recover",backup,"--key",recovery,"--check"), /verified/);
+  // A missing or substituted rollback must leave the working link in place.
+  const safeRollback = await readFile(rollback);
+  await rm(rollback);
+  assert.notEqual((await launch(["config","unlink","--kubeconfig",source]).promise).code,0);
+  await writeFile(rollback,Buffer.from("corrupt"),{mode:0o600});
+  assert.notEqual((await launch(["setup",source]).promise).code,0);
+  assert.equal(await readlink(source),generatedConfig);
+  await writeFile(rollback,safeRollback);
+  await successful(launch(["config","unlink","--kubeconfig",clientAlias]));
+  assert.equal(await readFile(source,"utf8"), original);
+  // A v0.1.1 link can have an old plaintext backup after an edited vault has moved on.
+  await writeFile(source+".before-kubeconfig-vault", original, {mode:0o600});
+  await rm(source);
+  await symlink(generatedConfig,source);
+  await successful(launch(["setup",source]));
+  await assert.rejects(stat(source+".before-kubeconfig-vault"), {code:"ENOENT"});
+  assert.ok(!(await readFile(rollback)).includes(tokenA));
+  await successful(launch(["config","unlink","--kubeconfig",source]));
+  assert.equal(await readFile(source,"utf8"),original);
+  await successful(launch(["history","prune","--keep","1"]));
+  assert.equal((await readdir(join(state,"generations"))).length,1);
+
+  // Restore at new state and executable paths, with the same recovery identity.
+  const oldState=state;
+  state=join(root,"relocated");
+  const relocated=join(root,"relocated-cli");
+  await copyFile(executable,relocated);
+  const restored=launch(["restore",backup,"--key",recovery],{program:relocated});
+  await successful(restored);
+  const restoredProjection=await readFile(join(state,"current","kubeconfig"),"utf8");
+  assert.ok(restoredProjection.includes(state) && restoredProjection.includes(relocated));
+  console.log("PASS: restored backup rebuilds paths for a new installation.");
+  const editor=join(root,"fixture-editor");
+  await writeFile(editor,"#!/bin/sh\nexit 0\n",{mode:0o700});
+  await successful(launch(["config","edit"],{env:{...process.env,VISUAL:editor}}));
+  await cli("stop");
+  state=oldState;
   await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:authenticator.authenticatorId});
   const recovered = join(root, "recovered");
   const restoring = launch(["recover", encryptedVault, "--out", recovered], { terminal: true });
@@ -209,11 +256,11 @@ try {
   assert.ok(!daemonLog.includes(tokenA)&&!daemonLog.includes(tokenB)&&!daemonLog.includes(recoveryText)&&!daemonLog.includes("DATA RACE"));
   for(const name of await readdir(join(state,"generations"))){for(const file of ["vault.age","metadata.json","kubeconfig"]){const data=await readFile(join(state,"generations",name,file));assert.ok(!data.includes(tokenA)&&!data.includes(tokenB)&&!data.includes(recoveryText))}}
   await cli("stop");await once(short,"exit");
-  await cli("config", "unlink", "--kubeconfig", source);
+
   assert.equal(await readFile(source, "utf8"), original);
   assert.ok(!(await stat(source + ".before-kubeconfig-vault").catch(() => false)));
   await assert.rejects(stat(join(state, "session.sock")), { code: "ENOENT" });
-  console.log("PASS: existing client path works across vault saves, and unlink restores the original without starting a daemon.");
+  console.log("PASS: existing client path works across vault saves, and authenticated unlink restores the original bytes.");
   console.log("PASS: local assets only; no Kubernetes token or private recovery key in browser HTTP or persistent generations.");
 } finally {
   clearTimeout(timeout);

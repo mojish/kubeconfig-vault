@@ -20,3 +20,5 @@ func samePeer(c *net.UnixConn) bool {
 	})
 	return err == nil && ok
 }
+
+func renameNew(src, dst string) error { return unix.RenamexNp(src, dst, unix.RENAME_EXCL) }

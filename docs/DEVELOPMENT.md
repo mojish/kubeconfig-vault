@@ -53,8 +53,7 @@ process-argument test uses procfs and `/usr/bin/python3`. `test:ui` checks that
 browser polling and click responses keep the correct page state.
 
 [CI](https://github.com/mojish/kubeconfig-vault/actions/workflows/ci.yml) runs
-native Go and UI tests on Ubuntu and both macOS architectures. Ubuntu also runs
-the browser integration, `npm audit`, and `govulncheck`. The advisory checks
+native Go and UI tests on Ubuntu and both macOS architectures. The browser integration runs on Ubuntu and macOS. Ubuntu also runs `npm audit` and `govulncheck`. The advisory checks
 need public package and vulnerability services. Review called symbols separately
 from matches in unused module packages. CI uses pinned actions, read-only
 permissions, and no configured secrets. Dependabot proposes dependency updates.

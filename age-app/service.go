@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,6 +19,7 @@ import (
 )
 
 type request struct {
+	Keep             int      `json:"keep,omitempty"`
 	Op               string   `json:"op"`
 	Path             string   `json:"path,omitempty"`
 	Recovery         string   `json:"recovery,omitempty"`
@@ -135,6 +137,14 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 	switch r.Op {
 	case "credential":
 		return s.credential(ctx, epoch, r)
+	case "prune":
+		return s.prune(ctx, r.Keep)
+	case "restore":
+		return s.restoreBackup(ctx, r)
+	case "setup":
+		return s.setup(ctx, r)
+	case "undo-setup":
+		return s.undoSetup(ctx, r.Path)
 	case "import":
 		return s.importConfig(ctx, r)
 	case "unlock":
@@ -251,15 +261,14 @@ func (s *service) importConfig(ctx context.Context, r request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var recovery *age.HybridIdentity
-	if len(r.RecoveryIdentity) != 0 {
-		if r.Recovery != "" {
-			return nil, errors.New("select one recovery key source")
-		}
-		recovery, err = parseRecovery(r.RecoveryIdentity)
-	} else {
-		recovery, err = readRecovery(r.Recovery)
+	if _, err := s.enroll(ctx, r, p); err != nil {
+		return nil, err
 	}
+	return s.status(), nil
+}
+
+func (s *service) enroll(ctx context.Context, r request, p *payload) ([]byte, error) {
+	recovery, err := requestRecovery(r)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +280,7 @@ func (s *service) importConfig(ctx context.Context, r request) (any, error) {
 	defer func() { c.finish(ok) }()
 	m, err := c.exchange(browserMessage{Op: "enroll"})
 	if err != nil {
-		return nil, err
+		return nil, c.failure(err)
 	}
 	if len(m.Identity) > 16384 || !strings.HasPrefix(m.Identity, "AGE-PLUGIN-FIDO2PRF-1") {
 		return nil, errors.New("invalid browser identity")
@@ -298,7 +307,7 @@ func (s *service) importConfig(ctx context.Context, r request) (any, error) {
 	}
 	s.clearSession()
 	ok = true
-	return s.status(), nil
+	return cipher, nil
 }
 
 func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
@@ -330,7 +339,7 @@ func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 	key := browserKey{c, snap.Meta.Identity}
 	old, err := decryptPayload(snap.Cipher, key)
 	if err != nil {
-		return nil, err
+		return nil, c.failure(err)
 	}
 	if old.Meta != snap.Meta || !equalProjection(old.Projection, snap.Projection) {
 		return nil, errors.New("vault metadata or generated settings changed")
@@ -469,17 +478,13 @@ func recoverFile(cipherPath, keyPath, out string) error {
 }
 
 func recoverWithKey(cipherPath, out string, key *age.HybridIdentity) error {
-	cipher, err := readBounded(cipherPath, maxVault, false)
+	p, err := readRecovered(cipherPath, key)
 	if err != nil {
 		return err
 	}
-	p, err := decryptPayload(cipher, key)
-	if err != nil {
-		return err
-	}
-	// Trust the authenticated payload, not possibly damaged outside metadata.
-	if p.Meta.Recovery != key.Recipient().String() {
-		return errors.New("recovery recipient does not match authenticated vault")
+	if out == "" {
+		fmt.Fprintln(os.Stdout, "Recovery verified.")
+		return nil
 	}
 	b, err := yaml.Marshal(p.Portable)
 	if err != nil {
@@ -495,4 +500,74 @@ func createRecovery(path string) error {
 		return errors.New("cannot generate recovery key")
 	}
 	return writeNew(path, []byte(identity.String()+"\n"))
+}
+
+func readRecovered(cipherPath string, key *age.HybridIdentity) (*payload, error) {
+	cipher, err := readBounded(cipherPath, maxVault, false)
+	if err != nil {
+		return nil, err
+	}
+	p, err := decryptPayload(cipher, key)
+	if err != nil {
+		return nil, err
+	}
+	// Trust the authenticated payload, not possibly damaged outside metadata.
+	if p.Meta.Recovery != key.Recipient().String() {
+		return nil, errors.New("recovery recipient does not match authenticated vault")
+	}
+	for _, entry := range p.Portable.Clusters {
+		if entry.Cluster.CAFile != "" {
+			return nil, errors.New("portable backup contains an external CA path")
+		}
+	}
+	data, err := serializeConfig(p.Portable)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(data)
+	if _, err := prepare(data, "", "", "", nil); err != nil {
+		return nil, errors.New("backup does not contain a supported portable kubeconfig")
+	}
+	return p, nil
+}
+
+func requestRecovery(r request) (*age.HybridIdentity, error) {
+	if len(r.RecoveryIdentity) != 0 {
+		if r.Recovery != "" {
+			return nil, errors.New("select one recovery key source")
+		}
+		return parseRecovery(r.RecoveryIdentity)
+	}
+	return readRecovery(r.Recovery)
+}
+
+func (s *service) restoreBackup(ctx context.Context, r request) (any, error) {
+	if id, err := currentID(s.state); err != nil || id != "" {
+		return nil, errors.New("restore requires an unused vault directory")
+	}
+	key, err := requestRecovery(r)
+	if err != nil {
+		return nil, err
+	}
+	old, err := readRecovered(r.Path, key)
+	if err != nil {
+		return nil, err
+	}
+	data, err := serializeConfig(old.Portable)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(data)
+	p, err := prepare(data, filepath.Dir(r.Path), s.state, s.executable, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Enroll with exactly the identity that authenticated the backup.
+	r.Recovery = ""
+	r.RecoveryIdentity = []byte(key.String())
+	defer clear(r.RecoveryIdentity)
+	if _, err := s.enroll(ctx, r, p); err != nil {
+		return nil, err
+	}
+	return "Vault restored. Run config link to connect your clients.", nil
 }

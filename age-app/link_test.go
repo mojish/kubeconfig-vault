@@ -1,94 +1,113 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestConfigLinkRoundTrip(t *testing.T) {
-	for _, kind := range []string{"regular", "relative symlink", "absent"} {
-		t.Run(kind, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "config")
-			backup := path + configBackupSuffix
-			generated := filepath.Join(dir, "vault-client-config")
-			if err := os.WriteFile(generated, []byte("generated client config"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			const original = "synthetic original in its original formatting\n"
-			switch kind {
-			case "regular":
-				if err := os.WriteFile(path, []byte(original), 0644); err != nil {
-					t.Fatal(err)
-				}
-			case "relative symlink":
-				if err := os.WriteFile(filepath.Join(dir, "original"), []byte(original), 0600); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink("original", path); err != nil {
-					t.Fatal(err)
-				}
-			}
-			for i := 0; i < 2; i++ {
-				if err := changeConfigLink(path, generated, true); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if target, err := os.Readlink(path); err != nil || target != generated {
-				t.Fatal("expected a symlink to the generated kubeconfig")
-			}
-			if kind == "regular" {
-				info, err := os.Stat(backup)
-				if err != nil || info.Mode().Perm() != 0600 {
-					t.Fatal("plaintext backup is not private")
-				}
-			}
-			if err := changeConfigLink(path, generated, false); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := os.Lstat(backup); !errors.Is(err, os.ErrNotExist) {
-				t.Fatal("backup remains after unlink")
-			}
-			if kind == "absent" {
-				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
-					t.Fatal("unlink did not remove a link without an original")
-				}
-				return
-			}
-			if data, err := os.ReadFile(path); err != nil || string(data) != original {
-				t.Fatal("unlink did not restore the original config")
-			}
-			if kind == "relative symlink" {
-				if target, err := os.Readlink(path); err != nil || target != "original" {
-					t.Fatal("unlink did not restore the original relative symlink")
-				}
-			}
-		})
+func TestClientEntryPreservesAliasesAndStopsAtManagedLink(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(dir, "vault")
+	if err := privateDir(state); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir, "config")
+	entry := filepath.Join(dir, "original")
+	if err := os.WriteFile(entry, []byte("synthetic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("original", config); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := clientEntry(state, config); err != nil || got != entry {
+		t.Fatalf("alias %q: %v", got, err)
+	}
+	if err := replaceClient(entry, "", filepath.Join(state, "current", "kubeconfig")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := clientEntry(state, config); err != nil || got != entry {
+		t.Fatalf("managed alias %q: %v", got, err)
+	}
+	if _, err := clientEntry(state, filepath.Join(state, "test")); err == nil {
+		t.Fatal("accepted state file")
+	}
+}
+func TestSetupPathMergeRequiresSelection(t *testing.T) {
+	t.Setenv("KUBECONFIG", "a:b")
+	if _, err := setupPath(nil); err == nil {
+		t.Fatal("accepted merged config")
+	}
+	if _, err := setupPath([]string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestLegacyUnlink(t *testing.T) {
+	dir := t.TempDir()
+	s := service{state: dir}
+	client := filepath.Join(t.TempDir(), "config")
+	if err := os.Symlink(filepath.Join(dir, "current", "kubeconfig"), client); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(client+configBackupSuffix, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.clientLink("unlink", []string{"--kubeconfig", client}); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(client); err != nil || string(b) != "original" {
+		t.Fatal("original was not restored")
 	}
 }
 
-func TestConfigLinkLeavesUnrelatedEntriesAlone(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config")
-	backup := path + configBackupSuffix
-	generated := filepath.Join(dir, "vault-client-config")
-	if err := os.Symlink("unrelated", path); err != nil {
+func TestFreshSetupLostRaceRejectsUnenrolledKey(t *testing.T) {
+	state := privateTemp(t)
+	path := filepath.Join(t.TempDir(), "client")
+	if err := os.Symlink("generations/00112233445566778899aabbccddeeff", filepath.Join(state, "current")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(backup, []byte("existing unrelated backup"), 0600); err != nil {
+	s := service{state: state}
+	_, err := s.setup(context.Background(), request{Path: path, RecoveryIdentity: []byte("synthetic new identity")})
+	if err == nil || !strings.Contains(err.Error(), "not enrolled") {
+		t.Fatalf("expected a recovery-key conflict: %v", err)
+	}
+}
+
+func TestAliasConfigWriterBlocksActivation(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, link := range []bool{true, false} {
-		if err := changeConfigLink(path, generated, link); err == nil {
-			t.Fatal("operation accepted an unrelated entry or existing backup")
-		}
-		if target, err := os.Readlink(path); err != nil || target != "unrelated" {
-			t.Fatal("unrelated config changed")
-		}
-		if data, err := os.ReadFile(backup); err != nil || string(data) != "existing unrelated backup" {
-			t.Fatal("existing backup changed")
-		}
+	alias, entry := filepath.Join(dir, "alias"), filepath.Join(dir, "entry")
+	if err := os.Symlink(entry, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(alias+".lock", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	err = withClientLocks(alias, entry, func() error { t.Fatal("modified locked alias"); return nil })
+	if err == nil {
+		t.Fatal("expected contention")
+	}
+	if _, err := os.Stat(entry + ".lock"); !os.IsNotExist(err) {
+		t.Fatal("target lock leaked")
+	}
+}
+func TestPublishNewNeverReplacesFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "backup")
+	if err := publishNew(file, []byte("original")); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishNew(file, []byte("other")); err == nil {
+		t.Fatal("replaced backup")
+	}
+	b, err := os.ReadFile(file)
+	if err != nil || string(b) != "original" {
+		t.Fatal("backup changed")
 	}
 }

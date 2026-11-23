@@ -16,9 +16,7 @@ confirmation the CLI passes it over the private, peer-checked Unix socket for
 verification. It does not write it to a file, standard output, or the browser.
 The optional `recovery-key new` command creates a private file with mode 0600.
 Keep the identity separately because it can decrypt without the YubiKey.
-Back up the entire state directory,
-including Typage's nonsecret identity string needed to select a non-discoverable
-credential, as well as the independent recovery key.
+The backup command copies the encrypted generation only. The offline recovery identity and that ciphertext suffice to enroll a key on another laptop. Full filesystem backups of live state can include plaintext edits.
 
 The browser sees age file keys and recipient stanzas, never Kubernetes plaintext
 or the private recovery key. PRF derivation stays in Typage/browser memory.
@@ -77,8 +75,7 @@ Generations hold `vault.age`, `metadata.json`, and token-free `kubeconfig`. File
 are checked against reader limits, written, and read back through the normal
 generation loader before atomic `current` symlink replacement. This detects
 invalid metadata and oversized generated configs before publishing the candidate.
-Files are synced before replacement. All encrypted generations
-are retained; no pruning/restore CLI exists yet. Failed staging can leave an
+Files are synced before replacement. Generations are retained until an authenticated history prune. The active generation is always retained. Failed staging can leave an
 unreferenced encrypted generation. Sync failure after replacement explicitly
 reports uncertain durability. Offline recovery needs only a standalone age
 ciphertext and private recovery identity, without public metadata or a daemon.
@@ -130,8 +127,18 @@ whitespace. Unexpected text, PEM headers, private keys, and malformed blocks are
 rejected. The public projection embeds re-encoded certificates only. This avoids
 copying unrelated contents of a mixed PEM file into the unencrypted projection.
 
-`config link` backs up the existing client entry and atomically points its path
-at the generated kubeconfig. It uses the client-go lock file convention to
-avoid races with `kubectl config` writes. Vault saves replace the `current`
-generation link without changing the client path. The original backup may still
-contain plaintext credentials and needs separate protection.
+Setup enrols and verifies both recipients before changing the client path.
+For a matching original it reuses the verified ciphertext. A different legacy
+original is encrypted and checked with the authenticated recipients. The private
+receipt binds the resolved client path to the verified rollback ciphertext.
+The transaction locks the selected alias and target using client-go locks,
+checks the current bytes and file identity, and atomically replaces the target.
+A verified rollback is on disk before removing legacy plaintext or replacing
+a regular source. The separate rollback survives saves and history pruning.
+Authenticated unlink restores the exact source bytes as a private regular file.
+Stop arbitrary writers before switching files. Unlinking a plaintext directory
+entry cannot securely erase SSD blocks, filesystem snapshots or editor copies.
+
+Offline restore validates the embedded portable config before recreating the
+vault at new executable and state paths. Anyone with a public recovery recipient
+can encrypt data to it. Restore requires a backup obtained from trusted storage.

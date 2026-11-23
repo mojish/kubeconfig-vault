@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 func (s *service) socket() string { return filepath.Join(s.state, "session.sock") }
@@ -102,7 +103,7 @@ func (s *service) serve() error {
 		go func() {
 			defer func() { <-slots }()
 			defer c.Close()
-			_ = c.SetDeadline(time.Now().Add(6 * time.Minute))
+			_ = c.SetDeadline(time.Now().Add(16 * time.Minute))
 			if !samePeer(c) {
 				return
 			}
@@ -164,7 +165,7 @@ func (s *service) rpc(r request) (json.RawMessage, error) {
 		}
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(6 * time.Minute))
+	_ = c.SetDeadline(time.Now().Add(16 * time.Minute))
 	if json.NewEncoder(c).Encode(r) != nil {
 		return nil, errors.New("cannot send local request")
 	}
@@ -232,6 +233,12 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, `Kubeconfig Vault (experimental)
 Usage: kube-unlock-age [global options] COMMAND
 
+setup [FILE]                          Protect the client config and its rollback copy
+restore VAULT.age [--key FILE]         Enroll a security key on a new laptop using an encrypted backup
+backup NEW-FILE                       Copy the encrypted vault for offline recovery
+recover VAULT.age --check             Check offline recovery without writing plaintext
+history prune --keep COUNT             Keep the active and newest encrypted generations
+config edit                           Open your editor and verify the saved changes
 recovery-key new FILE                  Create a new private offline recovery key
 recovery-key public FILE               Print only its public recipient
 import [SOURCE]                       Enroll a vault from ~/.kube/config or a selected file
@@ -242,7 +249,7 @@ unlock | lock | status | stop          Manage the one-hour credential session
 config unlock                         Create a plaintext file for normal editing
 config lock [--accept-connection-changes]  Validate, encrypt, verify, and delete edit
 config discard                        Delete the unsaved plaintext edit
-config link [--kubeconfig FILE]       Point ~/.kube/config at the vault and preserve the original
+config link [--kubeconfig FILE]       Attach the selected client config with encrypted rollback
 config unlink [--kubeconfig FILE]     Restore the original kubeconfig
 export NEW-FILE                        Fresh authentication; portable plaintext export
 recover VAULT.age --out NEW-FILE       Paste your recovery key at a hidden prompt
@@ -299,16 +306,20 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	}
 	if a[0] == "recover" {
 		switch {
-		case len(a) == 4 && a[2] == "--out":
+		case len(a) == 3 && a[2] == "--check":
+			return recoverFromTerminal(a[1], "")
+		case len(a) == 5 && a[2] == "--key" && a[4] == "--check":
+			return recoverFile(a[1], a[3], "")
+		case len(a) == 4 && a[2] == "--out" && a[3] != "":
 			if err := recoverFromTerminal(a[1], a[3]); err != nil {
 				return err
 			}
-		case len(a) == 6 && a[2] == "--key" && a[4] == "--out":
+		case len(a) == 6 && a[2] == "--key" && a[4] == "--out" && a[5] != "":
 			if err := recoverFile(a[1], a[3], a[5]); err != nil {
 				return err
 			}
 		default:
-			return errors.New("usage: recover VAULT.age [--key FILE] --out NEW-FILE")
+			return errors.New("usage: recover VAULT.age [--key FILE] --check|--out NEW-FILE")
 		}
 		fmt.Fprintln(os.Stdout, "Portable plaintext config recovered to the selected file.")
 		return nil
@@ -332,9 +343,6 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	if a[0] == "path" {
 		return printPath(*state, a[1:])
 	}
-	if len(a) >= 2 && a[0] == "config" && (a[1] == "link" || a[1] == "unlink") {
-		return configureKubeconfigLink(*state, a[1], a[2:])
-	}
 	if err = privateDir(*state); err != nil {
 		return err
 	}
@@ -349,9 +357,72 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		}
 		return s.serve()
 	}
+	if a[0] == "history" {
+		return s.history(a[1:])
+	}
+	if a[0] == "setup" {
+		path, err := setupPath(a[1:])
+		if err != nil {
+			return err
+		}
+		return s.startSetup(path)
+	}
+	if a[0] == "restore" {
+		if len(a) != 2 && (len(a) != 4 || a[2] != "--key") {
+			return errors.New("usage: restore VAULT.age [--key FILE]")
+		}
+		if id, err := currentID(s.state); err != nil || id != "" {
+			return errors.New("restore requires an unused vault directory")
+		}
+		path, err := absolute(a[1])
+		if err != nil {
+			return err
+		}
+		r := request{Op: "restore", Path: path}
+		if len(a) == 4 {
+			r.Recovery, err = absolute(a[3])
+			if err != nil {
+				return err
+			}
+		} else {
+			key, err := promptRecoveryKey()
+			if err != nil {
+				return err
+			}
+			r.RecoveryIdentity = []byte(key.String())
+			defer clear(r.RecoveryIdentity)
+		}
+		return s.clientAction(r)
+	}
+	if a[0] == "backup" {
+		if len(a) != 2 {
+			return errors.New("usage: backup NEW-FILE")
+		}
+		snap, err := loadSnapshot(s.state)
+		if err != nil {
+			return err
+		}
+		if err := publishNew(a[1], snap.Cipher); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "Encrypted backup created. Keep your offline recovery key separately.")
+		return nil
+	}
+	if len(a) >= 2 && a[0] == "config" {
+		if a[1] == "edit" && len(a) == 2 {
+			return s.editConfig()
+		}
+		if a[1] == "link" || a[1] == "unlink" {
+			return s.clientLink(a[1], a[2:])
+		}
+	}
 	r := request{Op: a[0]}
 	switch a[0] {
-	case "status", "lock", "stop", "unlock":
+	case "status":
+		if len(a) > 2 || len(a) == 2 && a[1] != "--json" {
+			return errors.New("usage: status [--json]")
+		}
+	case "lock", "stop", "unlock":
 		if len(a) != 1 {
 			return errors.New("unexpected command argument")
 		}
@@ -439,6 +510,26 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	result, err := s.rpc(r)
 	if err != nil {
 		return err
+	}
+	if r.Op == "status" && len(a) == 1 && term.IsTerminal(int(os.Stdout.Fd())) {
+		var status struct {
+			Unlocked  bool
+			EditOpen  bool     `json:"edit_open"`
+			ExpiresAt string   `json:"expires_at"`
+			EditPaths []string `json:"edit_paths"`
+		}
+		if err := json.Unmarshal(result, &status); err != nil {
+			return err
+		}
+		if status.Unlocked {
+			fmt.Fprintln(os.Stdout, "Session unlocked until", status.ExpiresAt)
+		} else {
+			fmt.Fprintln(os.Stdout, "Session locked.")
+		}
+		if status.EditOpen {
+			fmt.Fprintln(os.Stdout, "Plaintext edit still open:", strings.Join(status.EditPaths, ", "))
+		}
+		return nil
 	}
 	fmt.Fprintln(os.Stdout, strings.TrimSpace(string(result)))
 	if r.Op == "import" && len(r.RecoveryIdentity) != 0 {

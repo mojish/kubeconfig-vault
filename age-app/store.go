@@ -331,3 +331,22 @@ func (s *service) finalizeEdit(expected []byte, commit func() error) error {
 	}
 	return nil
 }
+
+// Publish a complete file exclusively. A crash before the rename leaves
+// only a private staging directory and the original destination intact.
+func publishNew(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	stage, err := os.MkdirTemp(dir, ".kubeconfig-vault-stage-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stage)
+	file := filepath.Join(stage, "new")
+	if err := writeNew(file, data); err != nil {
+		return err
+	}
+	if err := renameNew(file, path); err != nil {
+		return err
+	}
+	return syncDir(dir)
+}

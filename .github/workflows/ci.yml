@@ -79,8 +79,12 @@ jobs:
           google-chrome --version
           kubectl version --client
           openssl version
+      - name: Check macOS integration prerequisites
+        if: runner.os == 'macOS'
+        run: |
+          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          command -v kubectl >/dev/null || brew install kubectl
       - name: Test synthetic browser and kubectl integration
-        if: runner.os == 'Linux'
         run: npm run test:browser
       - name: Check dependency advisories
         if: runner.os == 'Linux'

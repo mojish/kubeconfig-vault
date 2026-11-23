@@ -19,10 +19,16 @@ and follow their redirect to localhost. No launch capability appears in argument
 | --- | --- |
 | `recovery-key new FILE` | Exclusive private hybrid age identity file; no secret stdout |
 | `recovery-key public FILE` | Public recipient only |
+| `setup [FILE]` | Enroll if needed, verify encrypted rollback and attach a single client file |
+| `backup NEW-FILE` | Copy the current ciphertext for portable offline recovery |
+| `recover VAULT.age [--key FILE] --check` | Verify recovery and config validation in memory |
+| `restore VAULT.age [--key FILE]` | Restore into an unused state directory with fresh security-key enrollment and the same recovery key |
+| `history prune --keep COUNT` | Fresh authentication, then retain the active and newest generations, COUNT total |
+| `config edit` | Run the configured foreground editor, then encrypt and verify changes |
 | `import [SOURCE]` | Import from `~/.kube/config` by default, confirm recovery backup, then enroll and verify the vault |
 | `import SOURCE --recovery-key FILE` | Enroll and verify the vault using an existing private key file |
 | `path kubeconfig` / `path edit` / `path vault` | Print only the absolute path to the selected file |
-| `status` | JSON session state, expiry, primary `edit_path`, all `edit_paths`, and `fully_locked` |
+| `status [--json]` | Human-readable session state on a terminal, JSON when piped or requested. JSON includes session state, expiry, primary `edit_path`, all `edit_paths`, and `fully_locked` |
 | `unlock` | Fresh browser authentication and an absolute credential session |
 | `lock` / `stop` | Cancel authentication and clear cache; stop also exits daemon |
 | `config unlock` | Fresh authentication and a plaintext edit file |
@@ -50,7 +56,7 @@ and named contexts are accepted. Legacy `preferences` are kept in the encrypted
 editable source and omitted from generated client files and recovery exports.
 Token files, client certificates, exec/auth-provider, extensions outside
 `preferences`, and unknown fields fail without executing any imported command.
-Symlink source/CA/recovery files are rejected. Recovery identities
+Standalone import rejects symlink sources. Setup preserves client symlinks by managing their resolved regular target. Both reject symlink CA and recovery files. Recovery identities
 must be owned by this user, mode 0600, and not hard-linked. Outputs never overwrite.
 CA data accepts certificate PEM blocks only, without PEM headers or unrelated
 contents. Both generated and portable configurations must fit the 4 MiB reader
@@ -70,8 +76,7 @@ Exec requests support absent/null cluster extensions and reject nonempty ones;
 see [upstream exec types](https://github.com/kubernetes/client-go/blob/master/pkg/apis/clientauthentication/v1/types.go).
 
 The current vault metadata format is version 1.
-Encrypted generations are retained. Restore, repair, multi-key enrollment,
-in-place key rotation, and migration subcommands are not implemented. See
+Encrypted generations are retained until explicitly pruned. Pruning refuses to run with an open edit. Standalone backups and encrypted rollback copies remain usable after pruning. See
 [editing and limitations](ARCHITECTURE.md#editing-and-limitations).
 
 ## Client kubeconfig link
@@ -83,12 +88,32 @@ references another file, use `config link --kubeconfig FILE` and the same flag
 with `config unlink`. A client using an imported copy needs a file reference
 for the link to affect it.
 
-The link keeps the prior entry beside it at `FILE.before-kubeconfig-vault`. A
-regular file is copied with mode 0600. An existing symlink is preserved with
-its destination unchanged, including relative links. Linking refuses to replace
-an existing backup. Unlink only changes a symlink that points to this vault.
-Use the same `--state-dir` for link and unlink if you selected a custom vault.
+Setup and link store the original as `FILE.before-kubeconfig-vault.age`. A private
+receipt in the vault directory records its digest and resolved client path. Keep
+both for authenticated unlink. A missing or substituted backup stops restoration.
+An initially absent client entry has no rollback copy and unlink removes the link.
 
-The original entry still exposes the old configuration until you protect it.
-After you verify access and recovery, you can move the backup to protected
-storage. Once it is gone locally, `config unlink` can only remove the link.
+For multiple files in `KUBECONFIG`, pass one path to setup. Use
+`config unlink --kubeconfig FILE` for a file selected explicitly. With a single
+`KUBECONFIG` entry, setup, link and unlink select that file automatically.
+Referenced CA paths are resolved against the selected client path. Existing symlinks
+are preserved and the final target becomes the managed link. Changing that target
+affects every other reference to it. Close other editors before setup or unlink.
+
+An old regular plaintext backup is migrated only after the encrypted replacement
+has been verified. For a legacy symlink backup, use the old rollback with
+`config unlink` first, then run setup. An old backup with unsupported contents
+is preserved for manual handling. When setup reports interruption, leave the
+original and encrypted backup in place and rerun. A killed client or helper
+can leave a client-go `.lock` file. After confirming that every Vault or
+kubectl config writer using that file has exited, remove its stale lock and retry.
+
+Restore accepts only a trusted backup and its recovery key. It rebuilds a portable
+config with embedded CAs. Source formatting and relative file references are
+specific to the original laptop. Use authenticated unlink there for exact bytes.
+
+`config edit` uses VISUAL, then EDITOR, then vi. It accepts an executable path
+or an executable with whitespace-separated arguments. It supplies `--wait` to
+known GUI editors. For other launchers configure their foreground option.
+An unsuccessful editor exit leaves the edit open. Use the reported edit path
+and `config lock` to finish, or explicitly discard it.
