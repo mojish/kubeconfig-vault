@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Native tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, macos-15-intel]
+    defaults:
+      run:
+        shell: bash
+        working-directory: age-app
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use the same Go caches for setup and integration tests
+        run: |
+          printf 'GOPATH=%s/kube-unlock-go-path\nGOCACHE=%s/kube-unlock-go-cache\n' \
+            "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: age-app/package-lock.json
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: age-app/go.mod
+          cache-dependency-path: age-app/go.sum
+      - name: Validate workflow syntax and shell commands
+        if: runner.os == 'Linux'
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 ../.github/workflows/ci.yml
+      - name: Install locked dependencies and build browser assets
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          go mod download
+          go mod verify
+          npm run build:web
+      - name: Check formatting and static analysis
+        run: |
+          unformatted=$(gofmt -l ./*.go)
+          if [[ -n "$unformatted" ]]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+          go vet ./...
+      - name: Test native security boundaries and browser UI state
+        run: |
+          go test -race -count=1 -timeout=5m ./...
+          npm run test:ui
+      - name: Build native executable
+        run: |
+          go build -trimpath -o kube-unlock-age .
+          ./kube-unlock-age --help
+      - name: Check Linux integration prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          google-chrome --version
+          kubectl version --client
+          openssl version
+      - name: Test synthetic browser and kubectl integration
+        if: runner.os == 'Linux'
+        run: npm run test:browser
+      - name: Check dependency advisories
+        if: runner.os == 'Linux'
+        run: npm run audit:security
