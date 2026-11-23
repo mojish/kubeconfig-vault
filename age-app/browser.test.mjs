@@ -54,6 +54,14 @@ try {
     const compiled=spawnSync("go",["build","-race","-o",executable,"."],{cwd,encoding:"utf8",timeout:60000,env:{...process.env,GOTOOLCHAIN:"local",GOPROXY:"off",GOPATH:process.env.GOPATH||join(tmpdir(),"kube-unlock-go-path"),GOCACHE:process.env.GOCACHE||join(tmpdir(),"kube-unlock-go-cache")}});
     if(compiled.status!==0)throw new Error("Native integration build failed: "+compiled.stderr);
   }
+  // Keep the generated exec command at the same path across a real upgrade.
+  const previous = process.env.KUBE_UNLOCK_TEST_PREVIOUS_BINARY;
+  const candidate = join(root, "candidate");
+  if (previous) {
+    await rename(executable, candidate);
+    await copyFile(previous, executable);
+    await chmod(executable, 0o700);
+  }
   await writeFile(launcher,`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(${JSON.stringify(urlsFile)},process.argv[2]+'\\n',{mode:0o600}));\n`,{mode:0o700});
   const cert=join(root,"cert.pem"),key=join(root,"key.pem");
   const generated=spawnSync("openssl",["req","-x509","-newkey","rsa:2048","-nodes","-keyout",key,"-out",cert,"-subj","/CN=localhost","-days","1","-addext","subjectAltName=IP:127.0.0.1"],{encoding:"utf8",timeout:15000});
@@ -114,7 +122,7 @@ try {
   await call("Page.enable");await call("Runtime.enable");await call("Network.enable");await call("WebAuthn.enable",{enableUI:false});
   const authenticator=await call("WebAuthn.addVirtualAuthenticator",{options:{protocol:"ctap2",ctap2Version:"ctap2_1",transport:"usb",hasResidentKey:false,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true,hasPrf:true}});
   let navigated=0; const visibleSteps = new Set();
-  async function complete(operation){
+  async function complete(operation, buttonId = "continue"){
     await waitFor(async()=>{
       const opened=await urls();
       if(opened.length>navigated){
@@ -132,7 +140,7 @@ try {
       }
       if(operation.done)return true;
       if(await evaluate("document.body?.textContent.trim()==='Forbidden'"))throw new Error("Private-file redirect was rejected by HTTP navigation checks");
-      const step=await evaluate("(()=>{const b=document.querySelector('#continue');if(b&&!b.disabled){const step=document.querySelector('#progress').textContent;b.click();return step}})()");
+      const step=await evaluate(`(()=>{const b=document.getElementById(${JSON.stringify(buttonId)});if(b&&!b.disabled){const step=document.querySelector('#progress').textContent;b.click();return step}})()`);
       if(step)visibleSteps.add(step);return false;
     },"browser operation",500);
     return await operation.promise;
@@ -173,21 +181,58 @@ try {
 
   // Reproduce the install layout change with this disposable, already-enrolled vault.
   assert.ok(projection.includes(legacyExecutable));
+  kubectlConfig("use-context", "second");
   const oldDaemonExit = once(daemon, "exit");
   await cli("stop");
   await oldDaemonExit;
   executable = join(root, "kubeconfig-vault");
-  await rename(legacyExecutable, executable);
+  if (previous) {
+    await rm(legacyExecutable);
+    await rename(candidate, executable);
+  } else {
+    await rename(legacyExecutable, executable);
+  }
   await symlink("kubeconfig-vault", legacyExecutable);
   daemon = await startDaemon();
+
+  const pagesBeforeInvalidSetup = (await urls()).length;
+  const invalidSource = join(root, "unsupported-input");
+  const redactionMarker = "SYNTHETIC-PRIVATE-INPUT";
+  for (const [field, change] of [
+    ["tokenFile", c => { c.users[0].user = {tokenFile:redactionMarker}; }],
+    ["user.exec", c => { c.users[0].user = {exec:{command:redactionMarker,env:[{name:"EXAMPLE",value:redactionMarker}]}}; }],
+    ["proxy-url", c => { c.clusters[0].cluster["proxy-url"] = "https://proxy.invalid/?q="+redactionMarker; }],
+  ]) {
+    const invalid = structuredClone(sourceObject);
+    change(invalid);
+    await writeFile(invalidSource, JSON.stringify(invalid), {mode:0o600});
+    const rejected = launch(["setup",invalidSource]);
+    await waitFor(async () => {
+      assert.equal((await urls()).length, pagesBeforeInvalidSetup, "unsupported setup opened a browser");
+      return rejected.done;
+    }, "redacted setup diagnostic");
+    await rejected.promise;
+    assert.equal(rejected.code, 1);
+    assert.ok(rejected.stderr.includes(field));
+    assert.ok(!(rejected.stdout+rejected.stderr).includes(redactionMarker));
+  }
+  assert.equal((await urls()).length, pagesBeforeInvalidSetup);
 
   const kube=(context="synthetic")=>{
     const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--context",context,"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:source},stdio:["ignore","pipe","pipe"]});
     children.push(p);let stdout="",stderr="";const result={done:false};p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);result.promise=new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;Object.assign(result,{code,stdout,stderr});resolve(result)})});return result;
   };
+  function kubectlConfig(...args) {
+    const result = spawnSync(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl",
+      ["--kubeconfig",source,"config",...args], {encoding:"utf8"});
+    assert.equal(result.status, 0, "synthetic kubectl config command failed");
+    return result.stdout.trim();
+  }
   const before=(await urls()).length,first=kube(),second=kube("second");
   assert.equal(JSON.parse((await successful(first)).stdout).gitVersion,"v1.32.0");assert.equal((await second.promise).code,0);
   assert.equal((await urls()).length,before+1);
+  if (previous) console.log("PASS: upgraded an existing vault after kubectl rewrote the previous version's linked config.");
+  kubectlConfig("set-context", "--current", "--namespace", "vault-test");
   const warm=kube();assert.equal((await warm.promise).code,0);assert.equal((await urls()).length,before+1);
   const cached=JSON.parse(await cli("status"));assert.equal(cached.unlocked,true);assert.ok(Date.parse(cached.expires_at)-Date.now()>3500000);
   assert.deepEqual(await evaluate("[localStorage.length,sessionStorage.length]"),[0,0]);
@@ -207,6 +252,16 @@ try {
   await call("Page.removeScriptToEvaluateOnNewDocument",{identifier:dismiss.identifier});
   await successful(launch(["unlock"]));
   console.log("PASS: two clusters share one approval; a dismissed prompt produces one page and explicit unlock can retry immediately.");
+
+  await cli("lock");
+  const beforeDecline = (await urls()).length, declined = kube(), queued = kube("second");
+  await complete(declined, "decline");
+  assert.notEqual(declined.code, 0);
+  assert.notEqual((await queued.promise).code, 0);
+  assert.equal((await urls()).length, beforeDecline + 1);
+  assert.equal(JSON.parse(await cli("status")).unlocked, false);
+  await successful(launch(["unlock"]));
+  console.log("PASS: declining on the vault page rejects both clients and keeps the vault locked.");
 
   // Exercise one long-lived client-go process against the disposable API.
   const proxyPath=process.env.KUBE_UNLOCK_TEST_FREELENS_PROXY||"/opt/Freelens/resources/x64/freelens-k8s-proxy";
@@ -269,6 +324,8 @@ try {
   sourceObject.users[0].user.token=tokenB;await writeFile(edit,JSON.stringify(sourceObject,null,2),{mode:0o600});
   await successful(launch(["config","lock"]));acceptedToken=tokenB;
   const savedProjection = await readFile(generatedConfig, "utf8");
+  assert.equal(kubectlConfig("current-context"), "second");
+  assert.equal(kubectlConfig("view","--minify","-o","jsonpath={.contexts[0].context.namespace}"), "vault-test");
   assert.ok(savedProjection.includes(executable) && !savedProjection.includes(legacyExecutable));
   assert.equal(await stat(edit).catch(()=>false),false);assert.equal(JSON.parse(await cli("status")).fully_locked,true);
   const closedEdit = await launch(["path", "edit"]).promise;

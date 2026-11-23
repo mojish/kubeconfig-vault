@@ -54,6 +54,14 @@ including a manual lock. A separate two-context test dismisses one request and
 checks that the queued request shares its result. All tests use synthetic
 credentials and disposable state.
 
+The browser suite also rewrites the linked file with real kubectl before cold
+and cached requests, saves an edit, and checks the selected context and namespace
+afterward. The installer test uses a disposable download fixture to verify
+the exact release URLs and that a checksum failure preserves the installed binary.
+Linux CI builds the pinned v0.3.0 commit and enrolls with that binary before
+testing the upgrade. Set `KUBE_UNLOCK_TEST_PREVIOUS_BINARY` to a trusted v0.3.0
+executable to repeat this locally. The test upgrades only its disposable vault.
+
 The Go suite covers session expiry, Unix peer identity, authenticated storage,
 file handling, editing failures, and HTTP access controls. The Linux
 process-argument test uses procfs and `/usr/bin/python3`. `test:ui` checks that

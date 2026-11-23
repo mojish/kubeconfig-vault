@@ -3,13 +3,14 @@ import { Stanza, webauthn } from "age-encryption";
 let capability = location.hash.slice(1);
 history.replaceState(null, "", "/");
 const button = document.querySelector("#continue"), message = document.querySelector("#message"), progress = document.querySelector("#progress");
+const decline = document.querySelector("#decline");
 const encode = bytes => btoa(String.fromCharCode(...bytes));
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 let active = null, busy = false, finished = false, polling = false, revision = 0;
 let enrolled = false;
 function finish(text) {
   finished = true; revision++; capability = ""; active = null;
-  button.disabled = true; button.textContent = "Session closed"; message.textContent = text;
+  decline.disabled = button.disabled = true; button.textContent = "Session closed"; message.textContent = text;
 }
 async function api(path, value) {
   const response = await fetch(path, { method: "POST", credentials: "omit", cache: "no-store",
@@ -34,18 +35,30 @@ async function poll() {
       finish(page.success ? success : "Operation failed. Check the terminal for the result.");
       button.textContent = page.success ? "Completed" : "Operation failed";
     } else if (page.request) {
-      active = page.request; button.disabled = false;
+      active = page.request; decline.disabled = button.disabled = false;
       progress.textContent = `Step ${active.step} of ${active.total}`;
       button.textContent = ({enroll:"Set up security key",wrap:"Protect the vault",unwrap:active.total > 1 && active.step === active.total ? "Verify the encrypted vault" : "Unlock with security key"})[active.op];
       message.textContent = ({enroll:"Create a credential on your YubiKey.",wrap:"Protect this new vault generation with your YubiKey.",unwrap:"Authenticate with your YubiKey to decrypt and verify this vault."})[active.op];
-    } else { active = null; button.disabled = true; button.textContent = "Checking…"; message.textContent = "Waiting for the local application…"; }
+    } else { active = null; decline.disabled = button.disabled = true; button.textContent = "Checking…"; message.textContent = "Waiting for the local application…"; }
   } catch {
     if (!busy && !finished && expected === revision) finish("Local session closed or did not respond. Check the terminal for the operation result.");
   } finally { polling = false; }
 }
+decline.addEventListener("click", async () => {
+  if (busy || finished || !active) return;
+  busy = true; revision++; decline.disabled = button.disabled = true;
+  const id = active.id;
+  active.fileKey = ""; active = null;
+  try {
+    await api("/api/reply", {id, failed:true});
+    finish("Request declined. You can close this page.");
+  } catch {
+    finish("The local helper did not confirm the decline. You can close this page.");
+  }
+});
 button.addEventListener("click", async () => {
   if (busy || finished || !active) return;
-  busy = true; revision++; button.disabled = true; button.textContent = "Waiting for security key…";
+  busy = true; revision++; decline.disabled = button.disabled = true; button.textContent = "Waiting for security key…";
   message.textContent = "Complete your browser’s security-key prompt. This step stays disabled while the browser is waiting.";
   const request = active; active = null;
   let reply = { id: request.id }, key, authFailed = false;

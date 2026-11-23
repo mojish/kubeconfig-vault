@@ -194,7 +194,7 @@ try {
     clusters: [{ name: "synthetic", cluster: { server: `https://127.0.0.1:${server.address().port}`,
       "certificate-authority-data": certificate.toString("base64") } }],
     users: [{ name: "synthetic", user: { token } }],
-    contexts: [{ name: "synthetic", context: { cluster: "synthetic", user: "synthetic" } }],
+    contexts: ["synthetic", "alternate"].map(name => ({ name, context: { cluster: "synthetic", user: "synthetic" } })),
     "current-context": "synthetic" });
   stage = "kubectl against the test API";
   await mkdir(join(guiHome, ".kube"), { recursive: true });
@@ -246,7 +246,7 @@ try {
     }
     const beforeCold = await launchCount();
     stage = "cold kubectl unlock";
-    console.log("WAIT: Complete the separate Unlock Kubernetes access page. You may leave the key connected throughout this test.");
+    console.log("WAIT: Approve the Kubernetes client request in the browser. You may leave the key connected throughout this test.");
     await kube(clientConfig);
     const cached = await status(), count = await launchCount();
     assert.ok(cached.unlocked && count === beforeCold + 1, "cold unlock did not establish a session");
@@ -265,6 +265,9 @@ try {
     }
     if (!removed) console.log("SKIP: physical key-removal check. Continuing with the key connected.");
     stage = "cached kubectl access";
+    for (const args of [["use-context","alternate"], ["set-context","--current","--namespace","vault-test"], ["use-context","synthetic"]]) {
+      await run(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl", ["--kubeconfig",clientConfig,"config",...args], 15_000);
+    }
     await kube(clientConfig, 15_000);
     await kube(clientConfig, 15_000);
     assert.ok(await launchCount() === count && (await status()).expires_at === cached.expires_at, "cache opened a browser or extended its deadline");
@@ -272,6 +275,14 @@ try {
     if (macGUI) {
       await checkFreelens(false);
       await checkFreelens(true);
+      stage = "decline a client unlock";
+      await cli("lock");
+      const beforeDecline = await launchCount();
+      console.log("WAIT: Click Decline request on the vault page. Leave the YubiKey connected.");
+      await assert.rejects(kube(source));
+      assert.equal(await launchCount(), beforeDecline + 1);
+      assert.equal((await status()).unlocked, false);
+      console.log("PASS: declining the page rejected kubectl and left the helper locked.");
     }
     stage = "offline recovery";
     const beforeRecovery = await launchCount();

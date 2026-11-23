@@ -1,3 +1,11 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Kubeconfig Vault</title><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
-<body><main><p class="label">Kubeconfig Vault</p><h1 id="title">Connecting…</h1><p id="progress"></p><p id="message" role="status">Keep your YubiKey connected.</p><button id="continue" disabled>Continue with security key</button><p>Choose your USB security key in the browser prompt. Enter its PIN only in that prompt.</p><p>This page receives encryption key material. Your Kubernetes tokens and recovery key stay in the native application.</p></main></body></html>
+<body><main>
+<p class="label">Kubeconfig Vault · On this computer</p>
+<h1 id="title">Connecting…</h1>
+<p id="progress"></p><p id="message" role="status">Waiting for the local vault…</p>
+<button id="continue" disabled>Continue with security key</button>
+<button id="decline" disabled>Decline request</button>
+<p>If you didn’t expect this request, decline it. A Kubernetes app running in the background can request an unlock.</p>
+<p>Enter your PIN only in the browser’s security-key dialog. Your Kubernetes tokens and recovery key stay in the local vault application.</p>
+</main></body></html>

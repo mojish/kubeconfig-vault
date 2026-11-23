@@ -548,7 +548,7 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		if time.Now().Before(s.retryAfter) {
 			return nil, errors.New("browser unlock cooldown; run unlock explicitly to retry now")
 		}
-		p, current, err := s.open(ctx, "Unlock Kubernetes access")
+		p, current, err := s.open(ctx, "A Kubernetes client requested vault access")
 		if err != nil {
 			if current != nil && ctx.Err() == nil {
 				s.retryAfter = time.Now().Add(30 * time.Second)

@@ -23,6 +23,11 @@ Include the following areas in the assessment.
 Record the commit, platforms, areas reviewed, limitations, and remediation
 retest results in the assessment. Report vulnerabilities privately using the link
 above. Publish a redacted assessment and its reviewed commit after remediation.
+For a candidate that changes client compatibility or recovery, also check that
+kubectl rewrites preserve the authenticated cluster and user bindings, an
+unexpected unlock can be declined while a second client waits, and an offline
+backup survives loss of the generated kubeconfig. Review the migration path for
+older proxy URLs and verify that installer downloads come from a single release.
 The automated suite and [desktop hardware protocol](docs/MACOS.md) provide
 reproducible checks for a reviewer. Each has a different scope from a human
 security assessment.

@@ -57,6 +57,14 @@ It can also check a stopped vault without starting the helper.
 
 ## Everyday use
 
+Switch contexts with `kubectl config use-context NAME`, and set a namespace
+with `kubectl config set-context --current --namespace NAME`. Both work on the
+linked file. To change a token, cluster address, or certificate, use the vault editor.
+
+If an unlock page appears unexpectedly, select **Decline request**. A background
+Kubernetes app can request access. Declining an automatic unlock leaves the vault
+locked. When you're ready, run `kubeconfig-vault unlock` to start a fresh request.
+
 | To | Run |
 | --- | --- |
 | Edit in your normal editor | `kubeconfig-vault config edit` |

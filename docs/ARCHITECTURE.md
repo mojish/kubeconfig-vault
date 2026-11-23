@@ -75,6 +75,10 @@ Core dumps are disabled; swap and hibernation remain OS concerns.
 
 After a failed automatic unlock, a 30-second cooldown prevents queued clients
 from repeatedly opening browser tabs. Explicit `unlock` can retry immediately.
+The page labels an automatic client request and offers **Decline request** before
+any security-key interaction. Declining sends a failure for the current step.
+The helper knows a Kubernetes client requested credentials but cannot identify
+the application that started the request.
 
 Import encrypts and decrypt-verifies the candidate with both YubiKey and recovery
 identity before committing. Save authenticates the old vault, encrypts a fresh

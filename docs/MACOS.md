@@ -70,7 +70,8 @@ path of its executable inside the app bundle before starting.
 1. In Chrome, complete the three enrollment steps with the USB key. Approve
    the separate request to link the test kubeconfig and then kubectl's first
    unlock. Enter the PIN only in the browser's security-key dialog. The script
-   checks that two more kubectl processes reuse the same one-hour session.
+   switches contexts, sets a namespace, and checks that two more kubectl
+   processes reuse the same one-hour session.
 2. The script locks the vault and opens Freelens. Open the `synthetic` cluster.
    If it is missing, add the temporary path printed in Terminal under
    **Preferences → Kubernetes → Kubeconfig Syncs**. In a macOS file picker,
@@ -82,14 +83,17 @@ path of its executable inside the app bundle before starting.
    locks the vault and relaunches Freelens. Reconnect to the cluster, complete
    the fresh browser unlock and open **Namespaces** again. Quit Freelens when
    prompted. A missing authenticated namespace-list request fails the test.
-4. The script locks the helper and checks offline recovery with the temporary
+4. After quitting Freelens the second time, wait for the script to request
+   another unlock. Click **Decline request** on the vault page. The script
+   checks that kubectl failed and the helper stayed locked.
+5. The script locks the helper and checks offline recovery with the temporary
    recovery key. It prints the result, stops its processes, and deletes its
    temporary files. Close the test browser tabs. Ctrl-C also triggers cleanup.
 
 ## Report results
 
 Share the release tag, macOS version, Apple Silicon or Intel, Chrome and
-Freelens versions, YubiKey model, and the Gatekeeper result above. Include
+Freelens and kubectl versions, YubiKey model, and the Gatekeeper result above. Include
 the terminal's `PASS`, `SKIP`, `FAIL`, or `CANCELLED` lines and whether the
 namespace appeared in Freelens on both connections. If it failed, the last
 stage and any short macOS warning are enough. Keep PINs, keys, kubeconfigs,
