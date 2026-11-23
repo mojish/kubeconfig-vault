@@ -76,8 +76,10 @@ PIN only in Chrome’s prompt. The check covers import, cold unlock, cached acce
 and offline recovery with the key left connected. Ctrl+C or the test deadline
 ends the run and cleans up its temporary profile, vault, and recovery key.
 
-Linux has passed this hardware flow. Desktop browser launch and USB key use on
-macOS and the full Freelens GUI workflow still need hands-on testing.
+Linux has passed this hardware flow. An isolated Freelens 2.1.0 GUI test on Linux
+also passed cluster discovery, first unlock, session sharing with kubectl, and
+reconnect after a saved edit. That test used a virtual security key and a dummy
+API. Desktop browser launch and USB key use on macOS still need hands-on testing.
 
 ## Interrupted edits
 

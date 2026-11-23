@@ -83,7 +83,8 @@ This affects the current terminal and its child processes. To switch back,
 use a fresh terminal with your normal environment. For **Freelens**, run
 `"$vault" path kubeconfig`, copy the printed file path, and add that file to
 Freelens as a synchronized kubeconfig so it can see future saves. The bundled
-proxy passed testing. Full GUI testing is pending.
+proxy and Freelens 2.1.0 GUI passed on Linux with a dummy cluster and isolated
+profile. Reconnect to the cluster after `config lock` to pick up saved changes.
 
 ## Edit or lock the vault
 

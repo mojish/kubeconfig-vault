@@ -116,9 +116,10 @@ The input contract supports inline bearer tokens, verified HTTPS, public
 CA data/files, and standard named contexts. Token files, client certificates,
 exec/auth-provider sources, nonempty preferences, extensions, and unknown fields
 are rejected. No token is rotated. Client-go/Freelens can retain delivered tokens
-and existing streams after lock. Linux tests cover real kubectl and Freelens's
-Kubernetes proxy with synthetic data. Full GUI testing is pending. CI runs native tests on Apple Silicon and
-Intel macOS. Desktop browser and physical-key testing on macOS are pending.
+and existing streams after lock. Linux tests cover real kubectl, the Freelens
+Kubernetes proxy, and the Freelens 2.1.0 GUI with synthetic data. CI runs native
+tests on Apple Silicon and Intel macOS. Desktop browser and physical-key testing
+on macOS are pending.
 A physical USB YubiKey passed the [Linux hardware test](DEVELOPMENT.md#test-with-a-physical-yubikey).
 Typage’s WebAuthn API is experimental. The application has not had an independent
 security review.
