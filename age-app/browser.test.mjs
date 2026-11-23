@@ -21,7 +21,7 @@ let executable = legacyExecutable;
 const launcher = join(root,"browser"), urlsFile = join(root,"urls");
 const recovery = join(root,"offline-key"), source = join(root,"source"), children = [];
 const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
-let acceptedToken = tokenA, server, failure;
+let acceptedToken = tokenA, server, certificateAPI, failure;
 const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },420000);
 
 function launch(args, { terminal = false, program: cliProgram = executable, ...extra } = {}) {
@@ -43,6 +43,37 @@ async function bootstrapTarget(uri){
   const path=fileURLToPath(file);assert.equal((await stat(path)).mode&0o777,0o600);
   const target=(await readFile(path,"utf8")).match(/0;url=([^"<>]+)/)?.[1];
   assert.ok(target?.startsWith("http://localhost:"));return target;
+}
+
+async function startCertificateAPI(certificate, privateKey) {
+  const clientKeyFile = join(root,"client.key"), clientCertFile = join(root,"client.crt");
+  const csr = join(root,"client.csr"), extensions = join(root,"client.ext");
+  const issuer = join(root,"issuer.crt"), issuerKey = join(root,"issuer.key");
+  await writeFile(extensions,[
+    "basicConstraints=critical,CA:FALSE", "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=clientAuth", "subjectKeyIdentifier=hash", "authorityKeyIdentifier=keyid,issuer",
+  ].join("\n")+"\n",{mode:0o600});
+  for (const args of [
+    ["req","-sha256","-x509","-newkey","rsa:2048","-nodes","-keyout",issuerKey,"-out",issuer,"-subj","/CN=Test Client CA","-days","1",
+      "-addext","basicConstraints=critical,CA:TRUE","-addext","keyUsage=critical,keyCertSign","-addext","subjectKeyIdentifier=hash"],
+    ["req","-sha256","-new","-newkey","rsa:2048","-nodes","-keyout",clientKeyFile,"-out",csr,"-subj","/CN=vault-client"],
+    ["x509","-sha256","-req","-in",csr,"-CA",issuer,"-CAkey",issuerKey,"-set_serial","23","-days","1","-extfile",extensions,"-out",clientCertFile],
+    ["verify","-purpose","sslclient","-CAfile",issuer,clientCertFile],
+  ]) assert.equal(spawnSync("openssl",args,{stdio:"ignore"}).status,0,`synthetic client PKI failed at openssl ${args[0]}`);
+  const clientKey = await readFile(clientKeyFile), clientCert = await readFile(clientCertFile);
+  const mtls = https.createServer({cert:certificate,key:privateKey,ca:await readFile(issuer),requestCert:true,rejectUnauthorized:true},(req,res)=>{
+    const peer = req.socket.getPeerCertificate();
+    if (!req.socket.authorized || peer.subject.CN !== "vault-client" || req.headers.authorization) {
+      res.writeHead(403).end();
+      return;
+    }
+    res.writeHead(200,{"Content-Type":"application/json"}).end('{"gitVersion":"v1.mtls"}');
+  });
+  mtls.on("tlsClientError", error => {
+    console.error("Synthetic mutual TLS handshake failed:",error.code,error.reason || error.message);
+  });
+  await new Promise((resolve,reject)=>{mtls.once("error",reject);mtls.listen(0,"127.0.0.1",resolve)});
+  return {mtls,clientCert,clientKey};
 }
 
 try {
@@ -75,6 +106,25 @@ try {
   const sourceObject={apiVersion:"v1",kind:"Config",clusters:[{name:"synthetic",cluster:{server:`https://127.0.0.1:${server.address().port}`,"certificate-authority-data":certificate.toString("base64")}}],users:[{name:"synthetic",user:{token:tokenA}}],contexts:[{name:"synthetic",context:{cluster:"synthetic",user:"synthetic"}}],"current-context":"synthetic",preferences:{colors:true}};
   sourceObject.clusters.push({name:"second",cluster:{...sourceObject.clusters[0].cluster,server:sourceObject.clusters[0].cluster.server+"/second"}});
   sourceObject.contexts.push({name:"second",context:{cluster:"second",user:"synthetic"}});
+  const {mtls,clientCert,clientKey} = await startCertificateAPI(certificate,privateKey);
+  certificateAPI = mtls;
+  const certificateCluster = {server:`https://127.0.0.1:${mtls.address().port}`,"certificate-authority-data":certificate.toString("base64")};
+  const certificateUser = {"client-certificate-data":clientCert.toString("base64"),"client-key-data":clientKey.toString("base64")};
+  // Establish that the test issuer and client fixture work on this OS before exercising the vault.
+  const directConfig = join(root,"plain-mtls");
+  const direct = structuredClone(sourceObject);
+  direct.users[0].user = certificateUser;
+  direct.clusters[0].cluster = certificateCluster;
+  await writeFile(directConfig,JSON.stringify(direct),{mode:0o600});
+  const plainClient = spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl",
+    ["--kubeconfig",directConfig,"--context","synthetic","get","--raw=/version","--request-timeout=15s"],
+    {stdio:["ignore","ignore","pipe"]});
+  children.push(plainClient);
+  let diagnostic = "";
+  plainClient.stderr.on("data",buf=>diagnostic+=buf);
+  const [plainCode] = await once(plainClient,"exit");
+  assert.equal(plainCode,0,"plaintext fixture failed mutual TLS before vault setup: "+diagnostic);
+  console.log("PASS: synthetic client and issuer work with kubectl before enrollment.");
   const original=JSON.stringify(sourceObject,null,2);await writeFile(source,original,{mode:0o600});
   const fresh = JSON.parse(await cli("status", "--json"));
   assert.equal(fresh.configured, false);
@@ -452,34 +502,14 @@ try {
   assert.deepEqual(await readdir(join(state,"edit")),[]);
   console.log("PASS: closing an unchanged edit requires only its opening page and preserves the generation.");
   // Use the restored vault to exercise mixed auth without changing the original fixture.
-  const clientKeyFile = join(root,"client.key"), clientCertFile = join(root,"client.crt");
-  const csr = join(root,"client.csr"), extensions = join(root,"client.ext");
-  const issuer = join(root,"issuer.crt"), issuerKey = join(root,"issuer.key");
-  await writeFile(extensions,"extendedKeyUsage=clientAuth\n",{mode:0o600});
-  for (const args of [
-    ["req","-x509","-newkey","rsa:2048","-nodes","-keyout",issuerKey,"-out",issuer,"-subj","/CN=Test Client CA","-days","1",
-      "-addext","basicConstraints=critical,CA:TRUE","-addext","keyUsage=critical,keyCertSign"],
-    ["req","-new","-newkey","rsa:2048","-nodes","-keyout",clientKeyFile,"-out",csr,"-subj","/CN=vault-client"],
-    ["x509","-req","-in",csr,"-CA",issuer,"-CAkey",issuerKey,"-set_serial","23","-days","1","-extfile",extensions,"-out",clientCertFile],
-  ]) assert.equal(spawnSync("openssl",args,{stdio:"ignore"}).status,0,"could not generate synthetic mTLS client");
-  const clientKey = await readFile(clientKeyFile), clientCert = await readFile(clientCertFile);
   const keyMarker = clientKey.toString().split("\n")[1];
-  const mtls = https.createServer({cert:certificate,key:privateKey,ca:await readFile(issuer),requestCert:true,rejectUnauthorized:true},(req,res)=>{
-    const peer = req.socket.getPeerCertificate();
-    if (!req.socket.authorized || peer.subject.CN !== "vault-client" || req.headers.authorization) {
-      res.writeHead(403).end();
-      return;
-    }
-    res.writeHead(200,{"Content-Type":"application/json"}).end('{"gitVersion":"v1.mtls"}');
-  });
-  try {
-    await new Promise((resolve,reject)=>{mtls.once("error",reject);mtls.listen(0,"127.0.0.1",resolve)});
+  {
     await successful(launch(["config","unlock"]));
     const mixedEdit = (await cli("path","edit")).trim();
     assert.ok((await readFile(mixedEdit,"utf8")).includes(tokenB));
     const mixed = structuredClone(sourceObject);
-    mixed.users.push({name:"cert-user",user:{"client-certificate-data":clientCert.toString("base64"),"client-key-data":clientKey.toString("base64")}});
-    mixed.clusters.push({name:"mtls",cluster:{server:`https://127.0.0.1:${mtls.address().port}`,"certificate-authority-data":certificate.toString("base64")}});
+    mixed.users.push({name:"cert-user",user:certificateUser});
+    mixed.clusters.push({name:"mtls",cluster:certificateCluster});
     mixed.contexts.push({name:"cert",context:{cluster:"mtls",user:"cert-user"}});
     await writeFile(mixedEdit,JSON.stringify(mixed),{mode:0o600});
     await successful(launch(["config","lock","--accept-connection-changes"]));
@@ -498,9 +528,6 @@ try {
       assert.ok(!visible.includes(keyMarker) && !visible.includes(clientKey.toString("base64")),"client key escaped native credential handling");
     }
     console.log("PASS: real kubectl used a token and an embedded client certificate in one vault; mutual TLS worked after offline recovery.");
-  } finally {
-    mtls.closeAllConnections();
-    await new Promise(resolve=>mtls.close(resolve));
   }
   await cli("stop");
   state=oldState;
@@ -536,6 +563,7 @@ try {
 } finally {
   clearTimeout(timeout);
   for(const p of children.reverse()){if(p.exitCode===null&&p.signalCode===null){const exited=once(p,"exit");p.kill();await Promise.race([exited,delay(2000)]);if(p.exitCode===null&&p.signalCode===null){p.kill("SIGKILL");await exited}}}
+  if(certificateAPI?.listening){certificateAPI.closeAllConnections();await new Promise(resolve=>certificateAPI.close(resolve))}
   if(server?.listening){server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
   await rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:200});
 }
