@@ -1,0 +1,9 @@
+#!/usr/bin/python3
+"""Stable launcher that also works through a symlink in ~/.local/bin."""
+from pathlib import Path
+import runpy
+import sys
+
+directory = Path(__file__).resolve().parent
+sys.path.insert(0, str(directory))
+runpy.run_path(str(directory / "kube_unlock.py"), run_name="__main__")

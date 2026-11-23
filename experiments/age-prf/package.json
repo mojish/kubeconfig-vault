@@ -1,0 +1,14 @@
+{
+  "name": "kube-unlock-age-prf-experiment",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "age-encryption": "0.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.2"
+  }
+}

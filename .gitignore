@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+/age-app/web/app.js
+/age-app/kube-unlock-age

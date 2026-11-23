@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kube unlock · YubiKey check</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">KUBE UNLOCK · LOCAL COMPATIBILITY CHECK</p>
+    <h1>Check your YubiKey</h1>
+    <p>Before protecting your configuration, we’ll check that your browser and USB security key can encrypt and unlock a dummy message.</p>
+    <section aria-labelledby="stage">
+      <h2 id="stage">Preparing the test…</h2>
+      <p id="status" role="status" aria-live="polite"></p>
+      <button id="continue" type="button" disabled>Preparing…</button>
+      <p id="error" role="alert"></p>
+    </section>
+    <p class="note">Use your physical YubiKey when the browser asks. Enter its PIN only in the browser’s security-key dialog. This page has no PIN field.</p>
+    <p class="note">This test creates a separate temporary credential. It does not reset your YubiKey or change your existing keys. No kubeconfig, Kubernetes token, or SSH file is opened.</p>
+  </main>
+</body>
+</html>
