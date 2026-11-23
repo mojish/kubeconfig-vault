@@ -5,6 +5,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, copyFile, readFile, readlink, rename, symlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
 import https from "node:https";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +22,7 @@ const launcher = join(root,"browser"), urlsFile = join(root,"urls");
 const recovery = join(root,"offline-key"), source = join(root,"source"), children = [];
 const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
 let acceptedToken = tokenA, server, failure;
-const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },120000);
+const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },300000);
 
 function launch(args, { terminal = false, program: cliProgram = executable, ...extra } = {}) {
   const command = [cliProgram, "--state-dir", state, "--browser", launcher, ...args];
@@ -64,6 +65,8 @@ try {
   });
   await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
   const sourceObject={apiVersion:"v1",kind:"Config",clusters:[{name:"synthetic",cluster:{server:`https://127.0.0.1:${server.address().port}`,"certificate-authority-data":certificate.toString("base64")}}],users:[{name:"synthetic",user:{token:tokenA}}],contexts:[{name:"synthetic",context:{cluster:"synthetic",user:"synthetic"}}],"current-context":"synthetic",preferences:{colors:true}};
+  sourceObject.clusters.push({name:"second",cluster:{...sourceObject.clusters[0].cluster,server:sourceObject.clusters[0].cluster.server+"/second"}});
+  sourceObject.contexts.push({name:"second",context:{cluster:"second",user:"synthetic"}});
   const original=JSON.stringify(sourceObject,null,2);await writeFile(source,original,{mode:0o600});
   const fresh = JSON.parse(await cli("status", "--json"));
   assert.equal(fresh.configured, false);
@@ -96,8 +99,11 @@ try {
   abandoned.child.stdin.write("\n");
   await waitFor(() => abandoned.output.includes("Type saved"), "recovery confirmation prompt");
   assert.deepEqual(await urls(), []);
-  abandoned.child.stdin.end("cancel\n");
+  abandoned.child.stdin.write("verify\n");
+  await waitFor(() => abandoned.output.includes("input is hidden"), "hidden confirmation prompt");
+  abandoned.child.stdin.end("invalid-synthetic-copy\r");
   assert.equal((await abandoned.promise).code, 1);
+  assert.ok(!abandoned.output.includes("invalid-synthetic-copy"));
   await assert.rejects(stat(join(state, "current")), { code: "ENOENT" });
   assert.deepEqual(await urls(), []);
   const {call:cdp,events}=chromeConnection(join(root,"chrome"),children);
@@ -110,7 +116,20 @@ try {
   let navigated=0; const visibleSteps = new Set();
   async function complete(operation){
     await waitFor(async()=>{
-      const opened=await urls();if(opened.length>navigated){navigated=opened.length;await bootstrapTarget(opened.at(-1));await call("Page.navigate",{url:opened.at(-1)})}
+      const opened=await urls();
+      if(opened.length>navigated){
+        navigated=opened.length;
+        const bootstrap=opened.at(-1);
+        const destination=new URL(await bootstrapTarget(bootstrap));
+        const start=events.length;
+        await call("Page.navigate",{url:bootstrap});
+        // The file page immediately redirects. Wait for the localhost document
+        // before issuing Runtime.evaluate into an execution context Chrome is replacing.
+        await waitFor(()=>events.slice(start).some(event=>
+          event.sessionId===sessionId && event.method==="Page.frameNavigated" &&
+          event.params.frame.url.split("#")[0]===destination.origin+"/"
+        ),"localhost browser navigation");
+      }
       if(operation.done)return true;
       if(await evaluate("document.body?.textContent.trim()==='Forbidden'"))throw new Error("Private-file redirect was rejected by HTTP navigation checks");
       const step=await evaluate("(()=>{const b=document.querySelector('#continue');if(b&&!b.disabled){const step=document.querySelector('#progress').textContent;b.click();return step}})()");
@@ -128,8 +147,12 @@ try {
   const savedKey = importing.output.match(/\bAGE-SECRET-KEY-[A-Z0-9-]+\b/)?.[0];
   assert.ok(savedKey, "No synthetic recovery key was shown");
   assert.deepEqual(await urls(), []);
-  importing.child.stdin.end("saved\n");
+  importing.child.stdin.write("verify\n");
+  await waitFor(() => importing.output.includes("input is hidden"), "hidden confirmation prompt");
+  importing.child.stdin.end(savedKey + "\r");
   await successful(importing);
+  assert.match(importing.stdout,/Security key verified/);
+  assert.equal(importing.output.split(savedKey).length - 1, 1, "verification echoed the recovery key");
   await assert.rejects(stat(recovery), { code: "ENOENT" });
   for(const step of ["Step 1 of 3","Step 2 of 3","Step 3 of 3"])assert.ok(visibleSteps.has(step),"Missing enrollment progress step");
   assert.equal(await readlink(clientAlias),"source");
@@ -158,11 +181,11 @@ try {
   await symlink("kubeconfig-vault", legacyExecutable);
   daemon = await startDaemon();
 
-  const kube=()=>{
-    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:source},stdio:["ignore","pipe","pipe"]});
+  const kube=(context="synthetic")=>{
+    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--context",context,"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:source},stdio:["ignore","pipe","pipe"]});
     children.push(p);let stdout="",stderr="";const result={done:false};p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);result.promise=new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;Object.assign(result,{code,stdout,stderr});resolve(result)})});return result;
   };
-  const before=(await urls()).length,first=kube(),second=kube();
+  const before=(await urls()).length,first=kube(),second=kube("second");
   assert.equal(JSON.parse((await successful(first)).stdout).gitVersion,"v1.32.0");assert.equal((await second.promise).code,0);
   assert.equal((await urls()).length,before+1);
   const warm=kube();assert.equal((await warm.promise).code,0);assert.equal((await urls()).length,before+1);
@@ -170,15 +193,70 @@ try {
   assert.deepEqual(await evaluate("[localStorage.length,sessionStorage.length]"),[0,0]);
   console.log("PASS: real kubectl to synthetic HTTPS API, concurrent unlock sharing, one-hour cache, empty browser storage.");
 
-  // Exercise the installed proxy only against the explicit synthetic config.
+  // A rejected browser request produces one failed unlock for two different clusters.
+  await cli("lock");
+  const dismiss = await call("Page.addScriptToEvaluateOnNewDocument", {
+    source: "Object.defineProperty(navigator.credentials,'get',{value:async()=>{throw new DOMException('Dismissed by test','NotAllowedError')}})"
+  });
+  const dismissBefore=(await urls()).length, left=kube(), right=kube("second");
+  await complete(left);
+  assert.notEqual(left.code,0);
+  assert.notEqual((await right.promise).code,0);
+  assert.equal((await urls()).length,dismissBefore+1);
+  assert.equal(JSON.parse(await cli("status")).unlocked,false);
+  await call("Page.removeScriptToEvaluateOnNewDocument",{identifier:dismiss.identifier});
+  await successful(launch(["unlock"]));
+  console.log("PASS: two clusters share one approval; a dismissed prompt produces one page and explicit unlock can retry immediately.");
+
+  // Exercise one long-lived client-go process against the disposable API.
   const proxyPath=process.env.KUBE_UNLOCK_TEST_FREELENS_PROXY||"/opt/Freelens/resources/x64/freelens-k8s-proxy";
-  if(await stat(proxyPath).catch(()=>false)){
-    const proxy=spawn(proxyPath,["proxy","--kubeconfig",source],{env:{...process.env,KUBECONFIG:source,FREELENS_PROXY_CONTEXT:"synthetic",FREELENS_PROXY_API_PREFIX:"/synthetic-test",FREELENS_PROXY_KEY:privateKey.toString(),FREELENS_PROXY_CERT:certificate.toString()},stdio:["ignore","pipe","pipe"]});children.push(proxy);let output="";proxy.stdout.on("data",b=>output+=b);proxy.stderr.on("data",b=>output+=b);
-    const port=await waitFor(()=>output.match(/127\.0\.0\.1:(\d+)/)?.[1],"synthetic Freelens proxy");
-    await new Promise((resolve,reject)=>{https.get({hostname:"127.0.0.1",port,path:"/synthetic-test/version",ca:certificate,timeout:10000},res=>{res.resume();res.on("end",()=>res.statusCode===200?resolve():reject(new Error("Synthetic proxy request failed")))}).on("error",reject).on("timeout",function(){this.destroy()})});
+  {
+    const freelens=await stat(proxyPath).then(info=>info.isFile(),()=>false);
+    const program=freelens ? proxyPath : process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl";
+    // Observe actual exec refreshes without recording arguments, tokens or responses.
+    const callsFile=join(root,"proxy-calls");
+    const shim=join(root,"proxy-exec");
+    const proxyConfig=join(root,"proxy-config");
+    await writeFile(shim,`#!${process.execPath}\nconst fs=require("node:fs"),{spawnSync}=require("node:child_process");\nfs.appendFileSync(${JSON.stringify(callsFile)},"call\\n",{mode:0o600});\nconst run=spawnSync(${JSON.stringify(executable)},process.argv.slice(2),{stdio:"inherit"});\nprocess.exit(run.status??1);\n`,{mode:0o700});
+    const observedConfig=projection.replaceAll(legacyExecutable,shim);
+    assert.notEqual(observedConfig,projection);
+    await writeFile(proxyConfig,observedConfig,{mode:0o600});
+    const calls=async()=>(await readFile(callsFile,"utf8")).trim().split("\n").length;
+    const args=["proxy","--kubeconfig",proxyConfig];
+    const env={...process.env,KUBECONFIG:proxyConfig};
+    if(freelens) Object.assign(env,{FREELENS_PROXY_CONTEXT:"synthetic",FREELENS_PROXY_API_PREFIX:"/synthetic-test",FREELENS_PROXY_KEY:privateKey.toString(),FREELENS_PROXY_CERT:certificate.toString()});
+    else args.push("--port=0","--address=127.0.0.1");
+    const proxy=spawn(program,args,{env,stdio:["ignore","pipe","pipe"]});
+    children.push(proxy);
+    let output="";
+    proxy.stdout.on("data",b=>output+=b);proxy.stderr.on("data",b=>output+=b);
+    const port=await waitFor(()=>output.match(/127\.0\.0\.1:(\d+)/)?.[1],"loopback proxy");
+    const readProxy=()=>new Promise((resolve,reject)=>{
+      const transport=freelens?https:http;
+      transport.get({hostname:"127.0.0.1",port,path:freelens?"/synthetic-test/version":"/version",ca:certificate,timeout:30000},res=>{
+        res.resume();
+        res.on("end",()=>res.statusCode===200?resolve():reject(new Error("Synthetic proxy request failed")));
+      }).on("error",reject).on("timeout",function(){this.destroy()});
+    });
+    const proxyStart=(await urls()).length;
+    await readProxy();
+    const firstCalls=await calls();
+    await delay(61000);
+    await readProxy();
+    assert.equal(await calls(),firstCalls+1,"warm proxy did not refresh the credential");
+    assert.equal((await urls()).length,proxyStart);
+    await cli("lock");
+    await readProxy();
+    assert.equal(await calls(),firstCalls+1,"immediate access unexpectedly refreshed the credential");
+    await delay(61000);
+    const refresh={done:false};
+    refresh.promise=readProxy().then(()=>({code:0})).finally(()=>{refresh.done=true});
+    await complete(refresh);
+    assert.equal(await calls(),firstCalls+2,"locked proxy did not refresh the credential");
+    assert.equal((await urls()).length,proxyStart+1);
     assert.ok(!output.includes(tokenA));proxy.kill();await once(proxy,"exit");
-    console.log("PASS: Freelens bundled Kubernetes proxy uses the new exec helper (no real profile).");
-  }else console.log("SKIP: Freelens proxy executable unavailable; no GUI compatibility claim.");
+    console.log(`PASS: one live ${freelens ? "Freelens" : "kubectl"} proxy refreshed silently after 61s, reused its token immediately after lock, and required one approval on its next refresh.`);
+  }
 
   await successful(launch(["config","unlock"]));
   const edit = (await cli("path", "edit")).trimEnd();
@@ -265,7 +343,13 @@ try {
   await assert.rejects(stat(absentClient), {code:"ENOENT"});
   const editor=join(root,"fixture-editor");
   await writeFile(editor,"#!/bin/sh\nexit 0\n",{mode:0o700});
-  await successful(launch(["config","edit"],{env:{...process.env,VISUAL:editor}}));
+  const editGeneration=await readlink(join(state,"current")), editPages=(await urls()).length;
+  const unchanged=await successful(launch(["config","edit"],{env:{...process.env,VISUAL:editor}}));
+  assert.match(unchanged.stdout,/No changes/);
+  assert.equal(await readlink(join(state,"current")),editGeneration);
+  assert.equal((await urls()).length,editPages+1);
+  assert.deepEqual(await readdir(join(state,"edit")),[]);
+  console.log("PASS: closing an unchanged edit requires only its opening page and preserves the generation.");
   await cli("stop");
   state=oldState;
   await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:authenticator.authenticatorId});

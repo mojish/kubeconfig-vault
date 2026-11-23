@@ -36,34 +36,43 @@ func privateDir(path string) error {
 }
 
 func checkPrivateDir(path string) error {
-	s, err := os.Lstat(path)
-	if err != nil {
+	var st unix.Stat_t
+	if err := unix.Lstat(path, &st); err != nil {
 		return err
 	}
-	if !s.IsDir() || s.Mode().Perm()&0077 != 0 {
+	if st.Mode&unix.S_IFMT != unix.S_IFDIR || st.Mode&0077 != 0 {
 		return errors.New("directory must be private (0700) and not a symlink")
 	}
-	var st unix.Stat_t
-	if unix.Lstat(path, &st) != nil || st.Uid != uint32(os.Getuid()) {
+	if st.Uid != uint32(os.Getuid()) {
 		return errors.New("directory must belong to the current user")
 	}
 	return nil
 }
 
-func readBounded(path string, limit int64, private bool) ([]byte, error) {
+func openBounded(path string, limit int64, private bool) (*os.File, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, errors.New("cannot open selected file")
 	}
 	f := os.NewFile(uintptr(fd), path)
-	defer f.Close()
 	var st unix.Stat_t
 	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Size > limit {
+		f.Close()
 		return nil, errors.New("expected a bounded regular file")
 	}
 	if private && (st.Uid != uint32(os.Getuid()) || st.Mode&0077 != 0 || st.Nlink != 1) {
+		f.Close()
 		return nil, errors.New("private file must be owned by this user, mode 0600, and not hard-linked")
 	}
+	return f, nil
+}
+
+func readBounded(path string, limit int64, private bool) ([]byte, error) {
+	f, err := openBounded(path, limit, private)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
 	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(b)) > limit {
 		clear(b)
@@ -152,8 +161,23 @@ func loadSnapshot(state string) (*snapshot, error) {
 }
 
 func loadGeneration(state, id string) (*snapshot, error) {
+	s, err := loadGenerationSettings(state, id)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = age.ParseHybridRecipient(s.Meta.Recovery); err != nil {
+		return nil, errors.New("invalid recovery recipient")
+	}
+	s.Cipher, err = readBounded(filepath.Join(state, "generations", id, "vault.age"), maxVault, true)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+func loadGenerationSettings(state, id string) (*snapshot, error) {
 	dir := filepath.Join(state, "generations", id)
-	if err := privateDir(dir); err != nil {
+	if err := checkPrivateDir(dir); err != nil {
 		return nil, err
 	}
 	b, err := readBounded(filepath.Join(dir, "metadata.json"), 65536, true)
@@ -163,12 +187,6 @@ func loadGeneration(state, id string) (*snapshot, error) {
 	s := &snapshot{ID: id}
 	if decodeJSON(b, &s.Meta) != nil || s.Meta.Version != 1 || len(s.Meta.Identity) > 16384 || !strings.HasPrefix(s.Meta.Identity, "AGE-PLUGIN-FIDO2PRF-") {
 		return nil, errors.New("invalid age vault metadata")
-	}
-	if _, err = age.ParseHybridRecipient(s.Meta.Recovery); err != nil {
-		return nil, errors.New("invalid recovery recipient")
-	}
-	if s.Cipher, err = readBounded(filepath.Join(dir, "vault.age"), maxVault, true); err != nil {
-		return nil, err
 	}
 	b, err = readBounded(filepath.Join(dir, "kubeconfig"), maxSource, true)
 	if err != nil {
@@ -301,7 +319,7 @@ func parseRecovery(b []byte) (*age.HybridIdentity, error) {
 // Detach the exact file we checked so an editor's later replacement at the
 // original path is never deleted. Editors must be closed before locking: no
 // portable filesystem primitive can freeze an uncooperative open write handle.
-func (s *service) finalizeEdit(expected []byte, commit func() error) error {
+func (s *service) finalizeEdit(expected []byte, outcome string, commit func() error) error {
 	pending := s.pendingEditPath()
 	if _, err := os.Lstat(pending); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("an interrupted save already exists; inspect status")
@@ -328,13 +346,13 @@ func (s *service) finalizeEdit(expected []byte, commit func() error) error {
 		return err
 	}
 	if !unchanged() {
-		return errors.New("vault saved but edit changed during commit; plaintext preserved; inspect status before retrying")
+		return errors.New(outcome + " but edit changed during finalization; plaintext preserved; inspect status before retrying")
 	}
 	if err := os.Remove(pending); err != nil {
-		return errors.New("vault saved but plaintext cleanup failed; inspect status")
+		return errors.New(outcome + " but plaintext cleanup failed; inspect status")
 	}
 	if _, err := os.Lstat(s.editPath()); !errors.Is(err, os.ErrNotExist) {
-		return errors.New("vault saved but a new edit appeared; plaintext preserved; inspect status before retrying")
+		return errors.New(outcome + " but a new edit appeared; plaintext preserved; inspect status before retrying")
 	}
 	return nil
 }

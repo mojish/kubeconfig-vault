@@ -43,11 +43,13 @@ and follow their redirect to localhost. No launch capability appears in argument
 | `export NEW-FILE` | Fresh authentication and portable plaintext export |
 | `recover VAULT.age --out NEW-FILE` | Offline recovery. Paste the key at a hidden terminal prompt. |
 | `recover VAULT.age --key FILE --out NEW-FILE` | Offline recovery using an existing private key file |
-| `credential ID` | ExecCredential v1 JSON, bounded by session/token expiry |
+| `credential ID` | ExecCredential v1 JSON, expiring within 60 seconds or earlier at the helper deadline or a recognized JWT expiry |
 | `serve` | Foreground daemon for troubleshooting |
 
-Interactive import shows the key only when requested. Type `saved` to start
-enrollment. Without a controlling terminal, use `--recovery-key FILE` for import
+Interactive setup and import reveal the key on the controlling terminal. Type
+`verify` to paste a copy from your saved backup with input hidden. A mismatch
+cancels before enrollment. Type `saved` to acknowledge the backup and proceed
+directly. Without a controlling terminal, use `--recovery-key FILE` for import
 or `--key FILE` for recovery. Commands that use file paths never put the key in
 their arguments. `path` needs no daemon or browser and fails if the requested
 file is absent. An interrupted edit is listed by `status`, not selected by `path edit`.
@@ -72,6 +74,12 @@ was saved. An interrupted finalization can leave `STATE/edit/saving`. Either
 edit path keeps `fully_locked` false. Inspect every returned `edit_paths` entry
 and preserve desired text before explicit discard. Ordinary lock/stop preserve
 both paths. See [editing](DEVELOPMENT.md#interrupted-edits) for recovery.
+
+`config lock` returns `changed: false` when the helper verifies that an edit
+still matches the generation opened for editing. No new generation or second
+browser page is needed. A committed save returns `changed: true`. Restarting
+or locking the helper during an edit discards its in-memory comparison and
+requires the usual authenticated save. Both successful paths clear the session.
 
 The generated `STATE/current/kubeconfig` uses an absolute binary path, exec v1,
 `interactiveMode: Never`, and `provideClusterInfo: true`. Clients may change

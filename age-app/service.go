@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -34,17 +35,43 @@ type response struct {
 }
 type session struct {
 	Generation   string
+	Meta         metadata
 	Records      map[string]record
 	Projection   config
 	Deadline     time.Time
 	WallDeadline time.Time
 }
+
+// Constructed only after authenticating the vault for config-unlock. The
+// operation mutex protects this in-memory record throughout the edit.
+type editBaseline struct {
+	generation         string
+	source, ciphertext [sha256.Size]byte
+	meta               metadata
+	projection         config
+	recordIDs          map[string]record
+	base               string
+}
+
+func authenticatedEdit(p *payload, snap *snapshot) *editBaseline {
+	ids := make(map[string]record, len(p.Records))
+	for name, r := range p.Records {
+		ids[name] = record{ID: r.ID}
+	}
+	return &editBaseline{
+		generation: snap.ID, source: sha256.Sum256([]byte(p.Source)),
+		ciphertext: sha256.Sum256(snap.Cipher), meta: p.Meta,
+		projection: managed(p.Projection), recordIDs: ids, base: p.Base,
+	}
+}
+
 type service struct {
 	state, executable, browser string
 	ttl                        time.Duration
 	op                         sync.Mutex
 	mu                         sync.Mutex
 	cache                      *session
+	edit                       *editBaseline
 	epoch                      uint64
 	active                     context.CancelFunc
 	closed                     bool
@@ -99,6 +126,7 @@ func (s *service) lock(stop bool) map[string]any {
 	// Wait until any cancelled plaintext operation has unwound before reporting.
 	s.op.Lock()
 	defer s.op.Unlock()
+	s.edit = nil
 	return s.status()
 }
 
@@ -155,11 +183,13 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		if err = s.cachePayload(epoch, p, snap.ID); err != nil {
 			return nil, err
 		}
+		s.retryAfter = time.Time{}
 		return s.status(), nil
 	case "config-unlock":
 		if len(s.editPaths()) != 0 {
 			return nil, errors.New("an edit already exists; save or discard it first")
 		}
+		s.edit = nil
 		p, snap, err := s.open(ctx, "Unlock a plaintext copy for editing")
 		if err != nil {
 			return nil, err
@@ -180,17 +210,24 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		if err = writeNew(s.editPath(), []byte(p.Source)); err != nil {
 			return nil, err
 		}
+		s.edit = authenticatedEdit(p, snap)
 		return s.status(), nil
 	case "config-lock":
 		return s.saveEdit(ctx, r.Accept)
 	case "config-discard":
+		s.edit = nil
 		s.clearSession()
+		if _, err := os.Lstat(filepath.Dir(s.editPath())); errors.Is(err, os.ErrNotExist) {
+			return s.status(), nil
+		}
 		for _, path := range s.editPaths() {
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return nil, errors.New("cannot delete plaintext edit")
 			}
 		}
-		_ = os.Remove(filepath.Join(s.state, "edit", "generation"))
+		if err := s.finishEditCleanup(); err != nil {
+			return nil, err
+		}
 		return s.status(), nil
 	case "export":
 		p, _, err := s.open(ctx, "Export a new plaintext kubeconfig")
@@ -214,6 +251,8 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 	}
 }
 
+// A selected snapshot is returned even when its authentication fails, so
+// automatic unlock can apply a prompt cooldown only after vault selection.
 func (s *service) open(ctx context.Context, title string) (*payload, *snapshot, error) {
 	snap, err := loadSnapshot(s.state)
 	if err != nil {
@@ -221,19 +260,19 @@ func (s *service) open(ctx context.Context, title string) (*payload, *snapshot, 
 	}
 	c, err := newCeremony(ctx, title, s.browser, 1)
 	if err != nil {
-		return nil, nil, err
+		return nil, snap, err
 	}
 	ok := false
 	defer func() { c.finish(ok) }()
 	p, err := decryptPayload(snap.Cipher, browserKey{c, snap.Meta.Identity})
 	if err != nil {
-		return nil, nil, err
+		return nil, snap, err
 	}
 	if p.Meta != snap.Meta || !equalProjection(p.Projection, snap.Projection) {
-		return nil, nil, errors.New("vault metadata or generated connection settings changed")
+		return nil, snap, errors.New("vault metadata or generated connection settings changed")
 	}
 	if ctx.Err() != nil {
-		return nil, nil, errors.New("operation cancelled")
+		return nil, snap, errors.New("operation cancelled")
 	}
 	ok = true
 	return p, snap, nil
@@ -310,6 +349,47 @@ func (s *service) enroll(ctx context.Context, r request, p *payload) ([]byte, er
 	return cipher, nil
 }
 
+// An unchanged source can still refer to a different CA on disk. Reuse the
+// ordinary preparation path to resolve those files and derive the exact
+// settings a full save would publish, including the installed command path.
+func (s *service) unchangedEdit(b []byte, snap *snapshot) bool {
+	e := s.edit
+	if e == nil || snap.ID != e.generation || snap.Meta != e.meta ||
+		sha256.Sum256(b) != e.source || sha256.Sum256(snap.Cipher) != e.ciphertext ||
+		!equalProjection(e.projection, snap.Projection) {
+		return false
+	}
+	next, err := prepare(b, e.base, s.state, s.executable, &payload{Records: e.recordIDs})
+	return err == nil && equalProjection(e.projection, next.Projection)
+}
+
+// Both plaintext names and the generation marker live in this directory.
+// Flush their removals together before reporting successful cleanup.
+func (s *service) finishEditCleanup() error {
+	dir := filepath.Dir(s.editPath())
+	markerErr := os.Remove(filepath.Join(dir, "generation"))
+	if err := syncDir(dir); err != nil {
+		return errors.New("could not make edit cleanup durable; check storage and retry config discard after inspecting status")
+	}
+	if markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
+		return errors.New("could not remove the edit generation marker; inspect the edit directory")
+	}
+	return nil
+}
+
+func (s *service) editSaved(changed bool) (map[string]any, error) {
+	s.edit = nil
+	if err := s.finishEditCleanup(); err != nil {
+		if changed {
+			return nil, fmt.Errorf("vault saved but cleanup incomplete: %w", err)
+		}
+		return nil, err
+	}
+	result := s.status()
+	result["changed"] = changed
+	return result, nil
+}
+
 func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 	if _, err := os.Lstat(s.pendingEditPath()); !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("an interrupted save remains; review edit_paths in status and preserve or discard the files before retrying")
@@ -329,6 +409,23 @@ func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 	}
 	if string(marker) != snap.ID {
 		return nil, errors.New("edit belongs to another generation; export or preserve it before recovery")
+	}
+	if s.unchangedEdit(b, snap) {
+		s.clearSession()
+		err = s.finalizeEdit(b, "vault unchanged", func() error {
+			current, err := loadSnapshot(s.state)
+			if err != nil {
+				return err
+			}
+			if !s.unchangedEdit(b, current) {
+				return errors.New("vault or connection settings changed while closing; plaintext edit preserved")
+			}
+			return ctx.Err()
+		})
+		if err != nil {
+			return nil, err
+		}
+		return s.editSaved(false)
 	}
 	c, err := newCeremony(ctx, "Validate and encrypt your edited kubeconfig", s.browser, 3)
 	if err != nil {
@@ -367,15 +464,14 @@ func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 	}
 	// Invalidate credentials even if the commit's final directory sync fails.
 	s.clearSession()
-	if err = s.finalizeEdit(b, func() error {
+	if err = s.finalizeEdit(b, "vault saved", func() error {
 		_, commitErr := commitSnapshot(s.state, snap.ID, p, cipher)
 		return commitErr
 	}); err != nil {
 		return nil, err
 	}
-	_ = os.Remove(filepath.Join(s.state, "edit", "generation"))
 	ok = true
-	return s.status(), nil
+	return s.editSaved(true)
 }
 
 func (s *service) cachePayload(epoch uint64, p *payload, generation string) error {
@@ -385,7 +481,7 @@ func (s *service) cachePayload(epoch uint64, p *payload, generation string) erro
 		return errors.New("unlock cancelled")
 	}
 	now := time.Now()
-	s.cache = &session{Generation: generation, Records: p.Records, Projection: p.Projection, Deadline: now.Add(s.ttl), WallDeadline: now.Round(0).Add(s.ttl)}
+	s.cache = &session{Generation: generation, Meta: p.Meta, Records: p.Records, Projection: p.Projection, Deadline: now.Add(s.ttl), WallDeadline: now.Round(0).Add(s.ttl)}
 	return nil
 }
 
@@ -415,22 +511,38 @@ func tokenDeadline(token string, deadline time.Time) time.Time {
 	}
 	return deadline
 }
+
+// Validate the files that select and describe the authenticated generation on
+// every delivery. Only a fresh authentication needs the ciphertext bytes.
+func (s *service) checkCachedGeneration(cached *session) error {
+	id, err := currentID(s.state)
+	if err != nil {
+		return err
+	}
+	if cached.Generation != id {
+		return errors.New("vault generation changed; refusing cached credentials")
+	}
+	settings, err := loadGenerationSettings(s.state, id)
+	if err != nil {
+		return err
+	}
+	if cached.Meta != settings.Meta || !equalProjection(cached.Projection, settings.Projection) {
+		return errors.New("vault metadata or connection settings changed; refusing cached credentials")
+	}
+	cipher, err := openBounded(filepath.Join(s.state, "generations", id, "vault.age"), maxVault, true)
+	if err != nil {
+		return err
+	}
+	return cipher.Close()
+}
+
 func (s *service) credential(ctx context.Context, epoch uint64, r request) (any, error) {
 	if r.Cluster == nil || !validID.MatchString(r.ID) || r.Cluster.CAFile != "" || r.Cluster.Insecure {
 		return nil, errors.New("exec request needs an approved cluster and credential ID")
 	}
-	snap, err := loadSnapshot(s.state)
-	if err != nil {
-		return nil, err
-	}
 	s.mu.Lock()
 	s.expireLocked()
 	cached := s.cache
-	if cached != nil && (cached.Generation != snap.ID || !equalProjection(cached.Projection, snap.Projection)) {
-		s.cache = nil
-		s.mu.Unlock()
-		return nil, errors.New("connection settings changed; refusing cached credentials")
-	}
 	s.mu.Unlock()
 	if cached == nil {
 		if time.Now().Before(s.retryAfter) {
@@ -438,7 +550,7 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		}
 		p, current, err := s.open(ctx, "Unlock Kubernetes access")
 		if err != nil {
-			if ctx.Err() == nil {
+			if current != nil && ctx.Err() == nil {
 				s.retryAfter = time.Now().Add(30 * time.Second)
 			}
 			return nil, err
@@ -446,7 +558,18 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		if err = s.cachePayload(epoch, p, current.ID); err != nil {
 			return nil, err
 		}
+		s.mu.Lock()
+		cached = s.cache
+		s.mu.Unlock()
 	}
+	if cached == nil {
+		return nil, errors.New("session expired or locked")
+	}
+	if err := s.checkCachedGeneration(cached); err != nil {
+		s.clearSession()
+		return nil, err
+	}
+	requestedBinding := binding(*r.Cluster)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked()
@@ -457,8 +580,8 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 	for _, rec := range cached.Records {
 		if rec.ID == r.ID {
 			for _, approved := range rec.Bindings {
-				if approved == binding(*r.Cluster) {
-					deadline := tokenDeadline(rec.Token, cached.WallDeadline)
+				if approved == requestedBinding {
+					deadline := credentialDeadline(rec.Token, cached.WallDeadline, time.Now())
 					if !time.Now().Round(0).Before(deadline) {
 						return nil, errors.New("Kubernetes token has expired; update the source credential")
 					}
@@ -468,6 +591,15 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		}
 	}
 	return nil, errors.New("credential is not approved for this cluster and TLS configuration")
+}
+
+// Client-go retains a delivered token until this timestamp, independently of the helper.
+func credentialDeadline(token string, sessionEnd, now time.Time) time.Time {
+	clientEnd := now.Add(time.Minute)
+	if sessionEnd.Before(clientEnd) {
+		clientEnd = sessionEnd
+	}
+	return tokenDeadline(token, clientEnd)
 }
 
 func recoverFile(cipherPath, keyPath, out string) error {

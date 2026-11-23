@@ -10,8 +10,8 @@ verified HTTPS. See [compatibility](#compatibility) for tested configurations.
 
 ## Install and set up
 
-If upgrading from v0.2.0 or v0.1.1, first run `kube-unlock-age stop`. Install
-into the same directory so existing kubeconfigs can keep calling the old name.
+**Upgrading an existing vault?** Run `kubeconfig-vault stop` first (use
+`kube-unlock-age stop` on v0.2.0 or earlier). Install into the same directory.
 
 Download the [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest) installer:
 
@@ -20,8 +20,10 @@ curl -fL -o install.sh https://github.com/mojish/kubeconfig-vault/releases/lates
   sh install.sh
 ```
 
-If your vault is already set up with v0.2.0, you're done. Run
-`kubeconfig-vault status` to see its state.
+If your vault is already set up with v0.2.x, run `kubeconfig-vault status`.
+Your current vault and client paths work with the new binary.
+Restart any open Freelens or other long-running Kubernetes client during the
+upgrade to drop tokens cached under the previous version’s one-hour policy.
 
 For a new vault, close any editors writing your kubeconfig, then run:
 
@@ -36,9 +38,12 @@ symlink, setup prints the target it will replace. All aliases to that target
 will use the vault.
 
 1. Reveal your offline recovery key in the terminal and save it separately.
-   Type `saved` once you have a copy. Your terminal and clipboard may retain it.
+   Type `verify` to paste your saved copy at a hidden prompt, or `saved` to
+   continue after saving it. Your terminal and clipboard may retain the displayed key.
 2. Complete the three numbered steps in the browser with your security key.
-   Enter its PIN in the browser's security-key prompt.
+   Enter its PIN in the browser's security-key prompt. Successful verification
+   confirms enrollment. The vault uses a non-discoverable credential, so it
+   normally has no entry in Yubico Authenticator’s Passkeys list.
 3. Run a familiar read-only kubectl command or reconnect in Freelens.
    Clients already reading the selected file pick up the vault through that path.
 
@@ -61,10 +66,15 @@ It can also check a stopped vault without starting the helper.
 
 Editing creates a private plaintext file. Set `VISUAL` or `EDITOR` to an editor
 that waits until you close the file. Disable editor backups for sensitive files.
-If validation fails, the edit is retained. The [CLI reference](docs/INTERFACE.md)
+Closing the editor without changes normally shows **No changes** and skips the
+second browser page. Changed files are encrypted and verified before the
+plaintext edit is removed. If validation fails, the edit is retained. The [CLI reference](docs/INTERFACE.md)
 covers resuming edits, reviewing changes to connection settings, and custom paths.
-Locking preserves open edits. Kubernetes clients may continue using a token
-they already received.
+Locking preserves open edits. A running kubectl or Freelens client can reuse
+its last token for up to 60 seconds. Its next request after that needs a fresh
+unlock. While the helper is unlocked, those refreshes happen silently. An
+existing watch or shell can stay connected. To revoke the token itself, use
+your cluster’s credential controls.
 
 ## Back up and recover
 
@@ -96,7 +106,7 @@ Treat that output as a live credential.
 | --- | --- |
 | Linux, Chrome, USB YubiKey | Physical enrollment, unlock, cached access and offline recovery with synthetic credentials |
 | Linux, kubectl and Freelens | Automated kubectl and Freelens proxy integration. Earlier Freelens 2.1.0 GUI qualification with an isolated profile |
-| macOS, Apple Silicon and Intel | Native build, test and package checks. Physical USB key and Freelens GUI qualification pending |
+| macOS, Apple Silicon and Intel | Native build, test and package checks. [Physical YubiKey and Freelens desktop volunteer test](docs/MACOS.md) |
 
 Use a browser and authenticator that support WebAuthn PRF. The binaries and
 browser support are experimental. The project awaits independent security

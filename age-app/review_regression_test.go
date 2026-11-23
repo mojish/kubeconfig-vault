@@ -357,7 +357,7 @@ func TestFinalizePreservesLateWritesAndFailures(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer f.Close()
-			e = s.finalizeEdit(old, func() error {
+			e = s.finalizeEdit(old, "vault saved", func() error {
 				switch kind {
 				case "replacement":
 					return writeNew(s.editPath(), newer)

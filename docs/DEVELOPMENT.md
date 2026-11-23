@@ -45,7 +45,11 @@ local HTTPS API. It needs Chrome, kubectl, OpenSSL, and Python 3.9 or newer for
 the pseudo-terminal test of the displayed and pasted synthetic key. Set
 `KUBE_UNLOCK_TEST_CHROME` or `KUBE_UNLOCK_TEST_KUBECTL` to override the executables.
 The optional Freelens proxy check uses `KUBE_UNLOCK_TEST_FREELENS_PROXY` or the
-installed Linux proxy. All tests use synthetic credentials and disposable state.
+installed Linux proxy. Without it, the suite uses a long-lived `kubectl proxy`.
+It counts exec-plugin calls and browser launches across two one-minute refreshes,
+including a manual lock. A separate two-context test dismisses one request and
+checks that the queued request shares its result. All tests use synthetic
+credentials and disposable state.
 
 The Go suite covers session expiry, Unix peer identity, authenticated storage,
 file handling, editing failures, and HTTP access controls. The Linux
@@ -60,15 +64,22 @@ permissions, and no configured secrets. Dependabot proposes dependency updates.
 
 ## Test with a physical YubiKey
 
-Build `kubeconfig-vault` in `age-app` using the commands above, then run from that
-directory:
+To test a **published macOS release** with a USB key and the Freelens desktop
+app, follow the [Mac volunteer guide](MACOS.md). It includes a first-launch
+Gatekeeper check and uses a synthetic cluster in a disposable account.
+
+For the kubectl hardware test on Linux or macOS, run these commands from the
+repository root with Node.js 22.12+, Chrome, kubectl, and OpenSSL available.
+Set `KUBE_UNLOCK_TEST_BINARY` to the absolute path of a published executable,
+or build `age-app/kubeconfig-vault` using the commands above.
 
 ```sh
-npm run test:physical -- --preflight-only
-npm run test:physical -- --keep-key-connected
+node age-app/physical.test.mjs --preflight-only
+node age-app/physical.test.mjs --keep-key-connected
 ```
 
-Preflight verifies kubectl against a dummy API without a key. The full run opens
+Preflight checks the executable version and verifies kubectl against a dummy
+HTTPS API without a key. The full run opens
 isolated Chrome and asks you to complete enrollment and then a separate unlock.
 The blank Chrome startup window needs no action. Use your USB key and enter its
 PIN only in Chrome’s prompt. The check covers import, cold unlock, cached access,

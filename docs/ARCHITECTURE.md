@@ -57,7 +57,15 @@ serialized, and successful concurrent cold requests reuse one unlock. The
 default one-hour session retains token records, approved public settings, and
 generation ID, not the full source or age file keys. Retrieval does not extend
 it. Both monotonic and wall-clock deadlines are checked; ordinary sleep does not
-extend the wall deadline. Recognized JWT expiry can shorten delivery. Screen-lock
+extend the wall deadline. Each exec response expires at the earliest of 60 seconds
+from delivery, the absolute session deadline, and a recognized JWT expiry.
+An unlocked refresh compares the current generation, metadata, and managed
+client settings with the authenticated session and checks the ciphertext file
+type, ownership, permissions, link count and size limit. It issues the token from
+memory. Only fresh authentication reads and decrypts the ciphertext.
+Client-go checks again on a subsequent request after expiry. Lock clears the
+helper immediately. It cannot revoke a copied bearer token or close an established
+watch, port-forward or shell. Screen-lock
 hooks are not implemented. Go/JavaScript cannot promise complete memory erasure.
 Core dumps are disabled; swap and hibernation remain OS concerns.
 
@@ -91,6 +99,16 @@ client selections where source selections were unchanged, and requires explicit
 acceptance of connection/trust/mapping changes. Validation failure retains the
 old vault and edit. Successful commit clears the session before deleting the
 edit; deletion failure is reported. Discard deletes the edit and clears cache.
+Successful save and discard wait for the edit directory to sync before
+reporting cleanup. If sync fails, inspect the paths in `status` before retrying.
+
+Opening an edit also records its authenticated generation, ciphertext and source
+digests, public projection, record IDs, and source directory in helper memory.
+Closing a byte-identical edit checks the current generation and re-resolves its
+CA inputs against that record, including a second check while the edit is isolated.
+A match closes the plaintext edit and clears the session. Other edits take the
+verified save path. Lock and helper restart invalidate this comparison. The disk
+edit marker contains only the generation ID.
 
 After authentication, save renames the editable file to `STATE/edit/saving` and
 compares it with the text used to encrypt the candidate. A change aborts commit

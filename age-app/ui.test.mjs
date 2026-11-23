@@ -46,3 +46,13 @@ test("poll requests do not accumulate while an earlier poll is waiting",async()=
   const h=await harness();void h.poll();void h.poll();void h.poll();
   assert.equal(h.waiting.length,1);
 });
+
+test("verified enrollment explains where to find the credential",async()=>{
+  const h=await harness();
+  const click=h.elements["#continue"].click();
+  h.auth.resolve("synthetic-identity"); await tick();
+  h.respond(h.waiting.shift(),{}); await tick();
+  h.respond(h.waiting.shift(),{title:page.title,done:true,success:true});
+  await click;
+  assert.match(h.elements["#message"].textContent,/non-discoverable credential/);
+});

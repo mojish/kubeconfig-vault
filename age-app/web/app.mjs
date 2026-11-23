@@ -6,6 +6,7 @@ const button = document.querySelector("#continue"), message = document.querySele
 const encode = bytes => btoa(String.fromCharCode(...bytes));
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 let active = null, busy = false, finished = false, polling = false, revision = 0;
+let enrolled = false;
 function finish(text) {
   finished = true; revision++; capability = ""; active = null;
   button.disabled = true; button.textContent = "Session closed"; message.textContent = text;
@@ -27,7 +28,10 @@ async function poll() {
     if (busy || finished || expected !== revision) return;
     document.querySelector("#title").textContent = page.title;
     if (page.done) {
-      finish(page.success ? "Finished. You can close this page and return to your application." : "Operation failed. Check the terminal; your previous vault remains available.");
+      const success = enrolled
+        ? "Vault verified. Its non-discoverable credential normally stays hidden in Yubico Authenticator’s Passkeys list. You can close this page."
+        : "Finished. You can close this page and return to your application.";
+      finish(page.success ? success : "Operation failed. Check the terminal for the result.");
       button.textContent = page.success ? "Completed" : "Operation failed";
     } else if (page.request) {
       active = page.request; button.disabled = false;
@@ -48,6 +52,7 @@ button.addEventListener("click", async () => {
   try {
     if (request.op === "enroll") {
       reply.identity = await webauthn.createCredential({ type: "security-key", keyName: "Kubeconfig Vault", rpId: "localhost" });
+      enrolled = true;
     } else if (request.op === "wrap") {
       key = decode(request.fileKey); request.fileKey = "";
       reply.stanzas = (await new webauthn.WebAuthnRecipient({ identity: request.identity }).wrapFileKey(key)).map(s => ({ type:s.args[0], args:s.args.slice(1), body:encode(s.body) }));

@@ -53,9 +53,19 @@ func (s *service) editConfig() error {
 	if err := cmd.Run(); err != nil {
 		return errors.New("editor exited unsuccessfully; plaintext edit preserved, resume it or run config discard")
 	}
-	if _, err = s.rpc(request{Op: "config-lock"}); err != nil {
+	if result, err = s.rpc(request{Op: "config-lock"}); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, "Changes encrypted and verified.")
+	var saved struct {
+		Changed *bool `json:"changed"`
+	}
+	if err = json.Unmarshal(result, &saved); err != nil {
+		return err
+	}
+	if saved.Changed != nil && !*saved.Changed {
+		fmt.Fprintln(os.Stdout, "No changes.")
+	} else {
+		fmt.Fprintln(os.Stdout, "Changes encrypted and verified.")
+	}
 	return nil
 }

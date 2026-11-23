@@ -43,7 +43,7 @@ jobs:
     name: Install release (${{ matrix.runner }})
     needs: package
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -81,6 +81,7 @@ jobs:
             brew install kubectl
           fi
           npm ci --ignore-scripts --no-audit --no-fund
+          node physical.test.mjs --preflight-only
           npm run test:browser
 
   draft:

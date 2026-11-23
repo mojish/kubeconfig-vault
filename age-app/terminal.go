@@ -40,11 +40,19 @@ func showNewRecoveryKey() ([]byte, error) {
 		return nil, errors.New("cannot generate recovery key")
 	}
 	key := []byte(identity.String())
-	if _, err = fmt.Fprintf(tty, "\n%s\n\nType saved to confirm you have a copy, then press Enter. ", key); err != nil {
+	if _, err = fmt.Fprintf(tty, "\n%s\n\nType saved if you have a copy, or type verify to check your saved copy in a hidden prompt: ", key); err != nil {
 		clear(key)
 		return nil, err
 	}
 	reply, err := reader.ReadString('\n')
+	if err == nil && strings.TrimSpace(reply) == "verify" {
+		copy, err := recoveryKeyFromTTY(tty)
+		if err != nil || copy.Recipient().String() != identity.Recipient().String() {
+			clear(key)
+			return nil, errors.New("saved copy did not match; setup cancelled before vault creation")
+		}
+		return key, nil
+	}
 	if err != nil || strings.TrimSpace(reply) != "saved" {
 		clear(key)
 		return nil, errors.New("import cancelled before vault creation")
@@ -66,6 +74,10 @@ func promptRecoveryKey() (*age.HybridIdentity, error) {
 		return nil, err
 	}
 	defer tty.Close()
+	return recoveryKeyFromTTY(tty)
+}
+
+func recoveryKeyFromTTY(tty *os.File) (*age.HybridIdentity, error) {
 	secret, err := readHiddenRecoveryKey(tty)
 	if err != nil && !errors.Is(err, term.ErrPasteIndicator) {
 		return nil, errors.New("cannot read recovery key from the terminal")

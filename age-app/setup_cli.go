@@ -62,7 +62,13 @@ func (s *service) startSetup(path string) error {
 		}
 		defer clear(r.RecoveryIdentity)
 	}
-	return s.clientAction(r)
+	if err := s.clientAction(r); err != nil {
+		return err
+	}
+	if len(r.RecoveryIdentity) != 0 {
+		fmt.Fprintln(os.Stdout, "Security key verified. This vault credential is non-discoverable in Yubico Authenticator.")
+	}
+	return nil
 }
 
 func (s *service) clientAction(r request) error {
