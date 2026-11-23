@@ -218,8 +218,8 @@ try {
   }
   assert.equal((await urls()).length, pagesBeforeInvalidSetup);
 
-  const kube=(context="synthetic")=>{
-    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--context",context,"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:source},stdio:["ignore","pipe","pipe"]});
+  const kube=(context="synthetic", kubeconfig=source)=>{
+    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--context",context,"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:kubeconfig},stdio:["ignore","pipe","pipe"]});
     children.push(p);let stdout="",stderr="";const result={done:false};p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);result.promise=new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;Object.assign(result,{code,stdout,stderr});resolve(result)})});return result;
   };
   function kubectlConfig(...args) {
@@ -445,12 +445,63 @@ try {
   const editor=join(root,"fixture-editor");
   await writeFile(editor,"#!/bin/sh\nexit 0\n",{mode:0o700});
   const editGeneration=await readlink(join(state,"current")), editPages=(await urls()).length;
-  const unchanged=await successful(launch(["config","edit"],{env:{...process.env,VISUAL:editor}}));
+  const unchanged=await successful(launch(["edit"],{env:{...process.env,VISUAL:editor}}));
   assert.match(unchanged.stdout,/No changes/);
   assert.equal(await readlink(join(state,"current")),editGeneration);
   assert.equal((await urls()).length,editPages+1);
   assert.deepEqual(await readdir(join(state,"edit")),[]);
   console.log("PASS: closing an unchanged edit requires only its opening page and preserves the generation.");
+  // Use the restored vault to exercise mixed auth without changing the original fixture.
+  const clientKeyFile = join(root,"client.key"), clientCertFile = join(root,"client.crt");
+  const csr = join(root,"client.csr"), extensions = join(root,"client.ext");
+  const issuer = join(root,"issuer.crt"), issuerKey = join(root,"issuer.key");
+  await writeFile(extensions,"extendedKeyUsage=clientAuth\n",{mode:0o600});
+  for (const args of [
+    ["req","-x509","-newkey","rsa:2048","-nodes","-keyout",issuerKey,"-out",issuer,"-subj","/CN=Test Client CA","-days","1",
+      "-addext","basicConstraints=critical,CA:TRUE","-addext","keyUsage=critical,keyCertSign"],
+    ["req","-new","-newkey","rsa:2048","-nodes","-keyout",clientKeyFile,"-out",csr,"-subj","/CN=vault-client"],
+    ["x509","-req","-in",csr,"-CA",issuer,"-CAkey",issuerKey,"-set_serial","23","-days","1","-extfile",extensions,"-out",clientCertFile],
+  ]) assert.equal(spawnSync("openssl",args,{stdio:"ignore"}).status,0,"could not generate synthetic mTLS client");
+  const clientKey = await readFile(clientKeyFile), clientCert = await readFile(clientCertFile);
+  const keyMarker = clientKey.toString().split("\n")[1];
+  const mtls = https.createServer({cert:certificate,key:privateKey,ca:await readFile(issuer),requestCert:true,rejectUnauthorized:true},(req,res)=>{
+    const peer = req.socket.getPeerCertificate();
+    if (!req.socket.authorized || peer.subject.CN !== "vault-client" || req.headers.authorization) {
+      res.writeHead(403).end();
+      return;
+    }
+    res.writeHead(200,{"Content-Type":"application/json"}).end('{"gitVersion":"v1.mtls"}');
+  });
+  try {
+    await new Promise((resolve,reject)=>{mtls.once("error",reject);mtls.listen(0,"127.0.0.1",resolve)});
+    await successful(launch(["config","unlock"]));
+    const mixedEdit = (await cli("path","edit")).trim();
+    assert.ok((await readFile(mixedEdit,"utf8")).includes(tokenB));
+    const mixed = structuredClone(sourceObject);
+    mixed.users.push({name:"cert-user",user:{"client-certificate-data":clientCert.toString("base64"),"client-key-data":clientKey.toString("base64")}});
+    mixed.clusters.push({name:"mtls",cluster:{server:`https://127.0.0.1:${mtls.address().port}`,"certificate-authority-data":certificate.toString("base64")}});
+    mixed.contexts.push({name:"cert",context:{cluster:"mtls",user:"cert-user"}});
+    await writeFile(mixedEdit,JSON.stringify(mixed),{mode:0o600});
+    await successful(launch(["config","lock","--accept-connection-changes"]));
+    const client = join(state,"current","kubeconfig");
+    const projection = await readFile(client,"utf8");
+    assert.ok(!projection.includes("client-key-data") && !projection.includes(clientKey.toString("base64")) && !projection.includes(keyMarker));
+    const certResult = await successful(kube("cert",client));
+    assert.equal(JSON.parse(certResult.stdout).gitVersion,"v1.mtls");
+    assert.equal(JSON.parse((await kube("synthetic",client).promise).stdout).gitVersion,"v1.32.0");
+    const certBackup = join(root,"mixed.age"), certRecovery = join(root,"mixed-recovered");
+    await cli("backup",certBackup);
+    await cli("recover",certBackup,"--key",recovery,"--out",certRecovery);
+    assert.equal(JSON.parse((await kube("cert",certRecovery).promise).stdout).gitVersion,"v1.mtls");
+    const browserRequests = JSON.stringify(events.filter(e=>e.method==="Network.requestWillBeSent").map(e=>e.params.request));
+    for (const visible of [projection,browserRequests,daemonLog]) {
+      assert.ok(!visible.includes(keyMarker) && !visible.includes(clientKey.toString("base64")),"client key escaped native credential handling");
+    }
+    console.log("PASS: real kubectl used a token and an embedded client certificate in one vault; mutual TLS worked after offline recovery.");
+  } finally {
+    mtls.closeAllConnections();
+    await new Promise(resolve=>mtls.close(resolve));
+  }
   await cli("stop");
   state=oldState;
   await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:authenticator.authenticatorId});

@@ -625,11 +625,11 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		if rec.ID == r.ID {
 			for _, approved := range rec.Bindings {
 				if approved == requestedBinding {
-					deadline := credentialDeadline(rec.Token, cached.WallDeadline, time.Now())
-					if !time.Now().Round(0).Before(deadline) {
-						return nil, errors.New("Kubernetes token has expired; update the source credential")
+					status, err := rec.execStatus(cached.WallDeadline, time.Now())
+					if err != nil {
+						return nil, err
 					}
-					return map[string]any{"apiVersion": "client.authentication.k8s.io/v1", "kind": "ExecCredential", "status": map[string]string{"token": rec.Token, "expirationTimestamp": deadline.UTC().Format(time.RFC3339)}}, nil
+					return map[string]any{"apiVersion": "client.authentication.k8s.io/v1", "kind": "ExecCredential", "status": status}, nil
 				}
 			}
 		}

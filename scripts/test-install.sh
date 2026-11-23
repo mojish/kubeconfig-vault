@@ -19,6 +19,8 @@ cat > "$scratch/mock/curl" <<'CURL'
 #!/bin/sh
 set -eu
 base=https://github.com/mojish/kubeconfig-vault/releases
+[ "$1" = -q ] || exit 2
+if [ -f "$KCV_FIXTURE/unavailable" ]; then exit 22; fi
 while [ "$#" -gt 1 ]; do
     case "$1" in -o) out=$2; shift 2 ;; *) shift ;; esac
 done
@@ -41,11 +43,34 @@ base=https://github.com/mojish/kubeconfig-vault/releases
     if [ "$#" -eq 0 ]; then printf '%s/latest\n' "$base"; fi
     printf '%s/download/%s/%s\n' "$base" "$tag" SHA256SUMS "$base" "$tag" "$asset"
 } > "$scratch/expected"
-sh "$installer" "$scratch/bin"
+sh "$installer" "$scratch/bin" > "$scratch/out" 2> "$scratch/log"
+test "$(cat "$scratch/out")" = "Installed $scratch/bin/kubeconfig-vault"
+for step in "Installing $tag" "Downloading SHA256SUMS" "Downloading $asset" "Checking SHA-256" "Extracting" "to PATH"; do
+    grep -Fq "$step" "$scratch/log"
+done
 diff "$scratch/expected" "$scratch/calls"
 cmp "$scratch/kube-unlock-age" "$scratch/bin/kubeconfig-vault"
 test "$(readlink "$scratch/bin/kube-unlock-age")" = kubeconfig-vault
 
+# Offline installations also work in directories containing spaces.
+offline="$scratch/local bin"
+PATH="$offline:$PATH" sh "$installer" --from-dir "$scratch" "$offline" > "$scratch/out" 2> "$scratch/log"
+grep -Fq 'Next, run kubeconfig-vault setup' "$scratch/log"
+cmp "$scratch/kube-unlock-age" "$offline/kubeconfig-vault"
+cp "$scratch/SHA256SUMS" "$scratch/good-sums"
+cat "$scratch/good-sums" >> "$scratch/SHA256SUMS"
+if sh "$installer" --from-dir "$scratch" "$offline" > "$scratch/out" 2> "$scratch/log"; then exit 1; fi
+grep -Fq 'one valid checksum' "$scratch/log"
+test ! -s "$scratch/out"
+mv "$scratch/good-sums" "$scratch/SHA256SUMS"
+touch "$scratch/unavailable"
+if sh "$installer" "$scratch/bin" > "$scratch/out" 2> "$scratch/log"; then exit 1; fi
+grep -Fq 'Error:' "$scratch/log"
+test ! -s "$scratch/out"
+rm "$scratch/unavailable"
+sh "$installer" --from-dir "$scratch" "$offline" > "$scratch/out" 2> "$scratch/log"
+grep -Fq 'run kubeconfig-vault stop' "$scratch/log"
+grep -Fq 'kubeconfig-vault status' "$scratch/log"
 # Once the manifest has been selected, latest can point elsewhere. The mock
 # serves only immutable asset URLs; a mismatched archive must preserve the binary.
 printf 'damaged\n' >> "$scratch/$asset"
@@ -53,4 +78,10 @@ rm "$scratch/advanced"
 if sh "$installer" "$scratch/bin" > "$scratch/result" 2>&1; then exit 1; fi
 grep -q 'checksum mismatch' "$scratch/result"
 cmp "$scratch/kube-unlock-age" "$scratch/bin/kubeconfig-vault"
-printf 'PASS: version-pinned downloads and failed-upgrade preservation\n'
+# Even a matching checksum must not turn an invalid archive into an installation.
+(cd "$scratch" && printf 'not a tar file' > "$asset" && shasum -a 256 "$asset" > SHA256SUMS)
+if sh "$installer" --from-dir "$scratch" "$offline" > "$scratch/out" 2> "$scratch/log"; then exit 1; fi
+test ! -s "$scratch/out"
+grep -Fq 'Could not extract' "$scratch/log"
+cmp "$scratch/kube-unlock-age" "$offline/kubeconfig-vault"
+printf 'PASS: install progress, pinned downloads, offline install and preserved binaries on failure\n'

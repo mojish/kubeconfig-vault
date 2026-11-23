@@ -10,13 +10,22 @@ usage() {
     printf 'Use --source to build from a checkout or --from-dir to install downloaded assets.\n'
 }
 
+log() {
+    printf '[kubeconfig-vault] %s\n' "$1" >&2
+}
+
 fail() {
-    printf '%s\n' "$1" >&2
+    printf '[kubeconfig-vault] Error: %s\n' "$1" >&2
     exit 1
 }
 
 require() {
     command -v "$1" >/dev/null 2>&1 || fail "Missing required command: $1"
+}
+
+fetch() {
+    curl -q -fsS --proto '=https' --proto-redir '=https' \
+        --connect-timeout 15 --max-time 90 --retry 2 --retry-max-time 120 "$@"
 }
 
 mode=download
@@ -57,6 +66,8 @@ esac
 
 target="$bin_dir/kubeconfig-vault"
 legacy="$bin_dir/kube-unlock-age"
+next_command=setup
+if [ -f "$target" ] || [ -f "$legacy" ]; then next_command=status; fi
 if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
     fail "Choose an install directory with a regular file or unused path at $target"
 fi
@@ -86,8 +97,12 @@ trap 'rm -rf "$stage"' EXIT
 trap 'exit 1' HUP INT TERM
 
 if [ "$mode" = source ]; then
-    npm ci --include=dev --ignore-scripts --no-audit --no-fund
-    npm run build:web
+    log "Building from source for $os/$arch"
+    log "Installing browser dependencies"
+    npm ci --include=dev --ignore-scripts --no-audit --no-fund >&2
+    log "Building browser assets"
+    npm run build:web >&2
+    log "Compiling the CLI"
     go build -trimpath -o "$stage/kubeconfig-vault" .
 else
     asset="kubeconfig-vault-$os-$arch.tar.gz"
@@ -96,7 +111,8 @@ else
         releases='https://github.com/mojish/kubeconfig-vault/releases'
         if [ -z "$release_tag" ]; then
             # A source checkout has no stamped tag. Resolve latest just once.
-            redirect=$(curl -fsS --proto '=https' --connect-timeout 15 \
+            log "Looking up the latest GitHub release"
+            redirect=$(fetch \
                 -o /dev/null -w '%{redirect_url}' "$releases/latest") ||
                 fail 'Unable to look up the latest GitHub release.'
             case "$redirect" in
@@ -108,22 +124,28 @@ else
         printf '%s\n' "$release_tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
             fail 'Invalid GitHub release tag.'
         base="$releases/download/$release_tag"
+        log "Installing $release_tag for $os/$arch"
         for name in SHA256SUMS "$asset"; do
-            code=0
-            curl -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 \
-                -o "$stage/$name" "$base/$name" || code=$?
-            if [ "$code" -eq 22 ]; then
-                fail 'No published release asset is available. Check GitHub Releases or run ./install.sh --source from a checkout.'
-            elif [ "$code" -ne 0 ]; then
-                fail "Unable to download $name. Check your connection and try again."
-            fi
+            log "Downloading $name"
+            fetch -L -o "$stage/$name" "$base/$name" ||
+                fail "Could not download $name from $base. Check the release and your connection, then retry."
         done
         release_dir=$stage
+    else
+        log "Installing from local release files for $os/$arch"
     fi
     if [ ! -f "$release_dir/$asset" ] || [ ! -f "$release_dir/SHA256SUMS" ]; then
         fail "Keep $asset and SHA256SUMS in the same directory."
     fi
-    expected=$(awk -v name="$asset" '$2 == name { print $1 }' "$release_dir/SHA256SUMS")
+    if [ "$mode" = offline ]; then
+        cp "$release_dir/$asset" "$stage/$asset" || fail "Could not stage $asset."
+        cp "$release_dir/SHA256SUMS" "$stage/SHA256SUMS" || fail "Could not stage the checksum manifest."
+        release_dir=$stage
+    fi
+    log "Checking SHA-256 for $asset"
+    expected=$(awk -v name="$asset" '$2 == name { count++; hash=$1; if (NF != 2) exit 1 }
+        END { if (count != 1 || length(hash) != 64 || hash ~ /[^0-9a-fA-F]/) exit 1; print tolower(hash) }' \
+        "$release_dir/SHA256SUMS") || fail "Expected one valid checksum for $asset in SHA256SUMS."
     if [ "$os" = darwin ]; then
         require shasum
         actual=$(shasum -a 256 < "$release_dir/$asset")
@@ -135,12 +157,22 @@ else
         fail 'Release checksum mismatch. The installed binary was left in place.'
     fi
     # Older published installers also extract this exact member from releases/latest.
-    tar -xOf "$release_dir/$asset" kube-unlock-age > "$stage/kubeconfig-vault"
+    log "Extracting the verified executable"
+    tar -xOf "$release_dir/$asset" kube-unlock-age > "$stage/kubeconfig-vault" ||
+        fail "Could not extract the executable from $asset."
     [ -s "$stage/kubeconfig-vault" ] || fail 'The release archive does not contain the executable.'
     chmod 755 "$stage/kubeconfig-vault"
 fi
 
+log "Installing the executable in $bin_dir"
 ln -s kubeconfig-vault "$stage/kube-unlock-age"
 mv -f "$stage/kubeconfig-vault" "$target"
 mv -f "$stage/kube-unlock-age" "$legacy"
 printf 'Installed %s\n' "$target"
+if [ "$next_command" = status ]; then
+    log "If a previous helper is running, run kubeconfig-vault stop so the next session uses this executable."
+fi
+case ":${PATH:-}:" in
+    *":$bin_dir:"*) log "Next, run kubeconfig-vault $next_command" ;;
+    *) log "To use kubeconfig-vault by name, add $bin_dir to PATH, then run kubeconfig-vault $next_command." ;;
+esac

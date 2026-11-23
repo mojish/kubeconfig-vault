@@ -1,173 +1,76 @@
-# Architecture and security boundaries
+# How Kubeconfig Vault protects Kubernetes credentials
 
-The vault and credential helper run on the user’s laptop. Kubernetes validates
-the existing bearer token.
+Kubernetes authenticates each user with their existing bearer token or TLS client certificate. Vault changes how the local client gets that credential. It keeps an encrypted kubeconfig on disk and supplies a credential to kubectl or Freelens after local approval. The cluster needs no identity provider, plugin, or new token.
 
-## Encryption and unlock
+## One Kubernetes request
 
-Go age v1.3.2 encrypts the complete payload; Typage v0.3.1 implements WebAuthn PRF
-recipient operations. Browser assets are bundled and embedded in the binary.
+```mermaid
+sequenceDiagram
+    participant C as kubectl or Freelens
+    participant H as Local vault helper
+    participant B as Local browser page
+    participant Y as YubiKey
+    participant K as Kubernetes API
+    C->>H: Request a credential for this cluster
+    opt No active session
+        H->>B: Open an unlock request
+        B->>Y: Ask for user verification and PRF
+        Y-->>B: PRF result
+        B-->>H: Unwrapped age file key
+        H->>H: Decrypt vault and verify settings
+    end
+    H->>H: Check generation and cluster binding
+    H-->>C: ExecCredential with a cache deadline
+    C->>K: HTTPS with a bearer token or mutual TLS
+```
 
-Every generation uses a fresh age file key with two recipients: a WebAuthn PRF
-credential and a hybrid age offline recovery recipient. Only the recovery public
-recipient persists in state. Interactive import displays the private identity
-through the controlling terminal after an explicit reveal. After backup
-confirmation the CLI passes it over the private, peer-checked Unix socket for
-verification. It does not write it to a file, standard output, or the browser.
-The optional `recovery-key new` command creates a private file with mode 0600.
-Keep the identity separately because it can decrypt without the YubiKey.
-Backup resolves the current generation once, checks its private directories
-and bounded ciphertext file, and copies it to a new destination. It can run
-with missing metadata or a damaged generated kubeconfig. The age header check
-detects a file-format mismatch. Use `recover --check` to authenticate the payload
-and verify recovery. Full filesystem backups of live state can include plaintext edits.
+The client reads an ordinary kubeconfig containing an absolute exec command, cluster settings, and credential IDs. The command talks to a helper over a Unix socket. Both ends verify the peer’s OS user. Concurrent requests share one successful unlock. The helper accepts a request only for a cluster bound to that credential in the authenticated vault.
 
-The browser sees age file keys and recipient stanzas, never Kubernetes plaintext
-or the private recovery key. PRF derivation stays in Typage/browser memory.
-Native age authenticates the complete header and payload before accepting an
-unlock. There is no backend assertion-signature login or trusted authentication
-boolean: successful authenticated decryption is the proof. Typage requires user
-verification and requests a security key, but does not attest the manufacturer
-or exclude compatible software credential providers.
+## Where the secrets live
 
-The browser and helper communicate over loopback HTTP. Each operation gets an
-IPv4 loopback listener, a random localhost
-port, a 256-bit fragment capability, exact Host/Origin checks, a dedicated request
-header, bounded JSON, and single-use step IDs. CSP blocks external assets and
-framing; responses are not cached, the fragment is cleared, and browser storage
-is unused. Operations time out after five minutes. Lock or client disconnect
-cancels pending authentication. The localhost RP is not application-exclusive:
-WebAuthn does not scope it by port. Same-user process/browser compromise remains
-outside this protection.
+| Item | Where it goes |
+| --- | --- |
+| Kubernetes token or TLS client key | Encrypted on disk in a vault generation. The native helper handles plaintext during setup and unlock. A successful session holds credential records in memory. The helper returns either a token or a PEM certificate chain and private key to the native client. The YubiKey unlocks stored credentials. A Kubernetes client private key is exportable to the authorized client. |
+| YubiKey credential | The authenticator holds the WebAuthn credential. For an approved operation, the browser uses its PRF output to wrap or unwrap an age file key. The localhost page receives encryption key material. Kubernetes credentials and the private offline recovery key stay in the native application. |
+| Recovery key | During interactive setup the CLI generates and displays the private identity on the controlling terminal and passes it to the helper for verification. You choose where to keep it. The vault stores the public recipient. The optional `recovery-key new` command writes a private identity file. |
+| Vault file key | age generates a fresh file key per encrypted generation. Both the WebAuthn recipient and the offline recovery recipient can unlock it. A cached credential session retains the credential records and approved settings, so it need not retain the file key. |
+| Plaintext edit or export | An explicit edit writes the original YAML to a private file. An export or offline recovery writes a portable kubeconfig to the new path you choose. Each contains usable credentials. |
 
-The launcher receives a `file:` URI for a mode-0600 HTML redirect in a private
-mode-0700 temporary directory. The capability is inside that file, not process
-arguments or desktop launch arguments. The browser follows the redirect to the
-loopback page. Only cross-site top-level document navigation to `/` is allowed
-for this handoff. Cross-site API calls and subresources remain rejected, even
-with a capability. The bootstrap is removed after the first authenticated API
-request, launch failure, or cancellation. A forced process crash can leave a
-private bootstrap file containing an expired capability. It contains no file key.
+The Go backend uses age. The bundled browser code uses Typage for WebAuthn PRF recipient operations. The helper authenticates the age header and payload and compares the resulting metadata and connection settings before accepting an unlock. User verification is required. The ceremony does not establish an authenticator’s manufacturer.
 
-Each browser step displays its number and purpose. Only one status poll runs at
-a time. Responses from before a click or terminal failure cannot restore an old
-step or re-enable its button. The page distinguishes waiting for the browser's
-security-key prompt from waiting for native verification, and bounds each local
-HTTP request to 15 seconds. A browser failure remains visible until a new
-operation is started.
+## Browser handoff
 
-Private Unix IPC checks peer UID on Linux and macOS. Management operations are
-serialized, and successful concurrent cold requests reuse one unlock. The
-default one-hour session retains token records, approved public settings, and
-generation ID, not the full source or age file keys. Retrieval does not extend
-it. Both monotonic and wall-clock deadlines are checked; ordinary sleep does not
-extend the wall deadline. Each exec response expires at the earliest of 60 seconds
-from delivery, the absolute session deadline, and a recognized JWT expiry.
-An unlocked refresh compares the current generation, metadata, and managed
-client settings with the authenticated session and checks the ciphertext file
-type, ownership, permissions, link count and size limit. It issues the token from
-memory. Only fresh authentication reads and decrypts the ciphertext.
-Client-go checks again on a subsequent request after expiry. Lock clears the
-helper immediately. It cannot revoke a copied bearer token or close an established
-watch, port-forward or shell. Screen-lock
-hooks are not implemented. Go/JavaScript cannot promise complete memory erasure.
-Core dumps are disabled; swap and hibernation remain OS concerns.
+Each ceremony gets a temporary IPv4 loopback listener, a random localhost port, a 256-bit capability, and single-use step IDs. A mode-0600 local HTML file in a private directory redirects the browser to the page. The capability travels in the URL fragment. Launcher arguments contain only the private file URI.
 
-Declining an automatic unlock on the vault page pauses new automatic prompts
-for ten minutes. Device errors, browser dismissal and authentication timeouts
-after vault selection use 30 seconds. Queued clients share the deadline.
-Explicit `unlock` can retry immediately. A successful unlock or helper restart
-clears the in-memory deadline.
-The page labels an automatic client request and offers **Decline request** before
-any security-key interaction. The page reports an explicit decline separately from a failed WebAuthn call.
-The helper knows a Kubernetes client requested credentials but cannot identify
-the application that started the request.
+The helper checks the host, origin, capability header, step ID and message size. Browser assets are bundled locally. The page clears the fragment, avoids persistent browser storage, and restricts external content and framing. Cross-site top-level navigation is allowed for the redirect. The API requires the local origin. The helper removes the redirect file after the first authenticated request, launch failure, or cancellation. A forced exit can leave a private file with an expired capability.
 
-Import encrypts and decrypt-verifies the candidate with both YubiKey and recovery
-identity before committing. Save authenticates the old vault, encrypts a fresh
-candidate using its approved recipients, and decrypt-verifies through the YubiKey
-before committing. This can require three security-key actions per save: decrypt
-old, wrap new, verify new. Recovery private material is needed at import, not
-ordinary saves; later recovery stanzas use the authenticated public recipient.
+A ceremony expires after five minutes. Locking or disconnecting the requesting client cancels it. An explicit decline of an automatic unlock pauses new prompts for ten minutes. An ordinary authentication failure after vault selection pauses them for 30 seconds. A manual unlock can retry immediately. The helper cannot reliably identify which desktop application triggered an automatic request.
 
-Generations hold `vault.age`, `metadata.json`, and token-free `kubeconfig`. Files
-are checked against reader limits, written, and read back through the normal
-generation loader before atomic `current` symlink replacement. This detects
-invalid metadata and oversized generated configs before publishing the candidate.
-Files are synced before replacement. Generations are retained until an authenticated history prune. The active generation is always retained. Failed staging can leave an
-unreferenced encrypted generation. Sync failure after replacement explicitly
-reports uncertain durability. Offline recovery needs only a standalone age
-ciphertext and private recovery identity, without public metadata or a daemon.
+## Session lifetime and its limits
+
+The default helper session lasts one hour from approval. Both elapsed time and a wall-clock deadline limit it, including across ordinary sleep. Every delivery checks the active generation, metadata, managed client settings, cluster binding, and ciphertext file metadata. A warm request uses the in-memory credential. A cold unlock reads and decrypts the ciphertext.
+
+The client’s own cache has a shorter deadline. Vault returns the earliest of 60 seconds from delivery, the helper’s expiry, and the credential’s expiry when available (a recognized JWT expiry or the client certificate’s expiry). `lock` clears the helper’s cache. A running client can still use its delivered credential or an established connection. The cluster still decides whether to accept the underlying credential.
+
+This design protects a stored kubeconfig. A process running as the same OS user, a compromised browser, or a client that has received a credential can access sensitive material. WebAuthn’s localhost relying-party ID is shared across ports. Screen lock does not lock the helper automatically. Core dumps are disabled, but swap, hibernation, editor backups and filesystem snapshots remain considerations. The project awaits independent security review. [Review scope](../SECURITY.md)
+
+## What gets written
+
+| Path | Purpose |
+| --- | --- |
+| Selected client path, usually `~/.kube/config` | A symlink to `STATE/current/kubeconfig`. The target contains client settings and the exec command. Clients already using the path keep working. |
+| `STATE/generations/ID/` | A private generation containing `vault.age`, public recipient metadata in `metadata.json`, and the generated client kubeconfig. `STATE/current` selects the active generation. |
+| `FILE.before-kubeconfig-vault.age` and its receipt | An encrypted copy of the exact original plus a digest bound to the resolved client path. Authenticated unlink uses these to restore the pre-setup bytes. |
+| `STATE/edit/kubeconfig` and, during save, `STATE/edit/saving` | Private plaintext. These can survive logout, a crash, or an ordinary lock. `status` reports known edit paths. |
+
+Setup verifies decryption through both recipients before publishing. It checks that the source and any CA inputs still match, verifies the encrypted rollback, and replaces the source under client-go locks. Saves stage and read back the new generation before atomically switching `current`. The active and previous generations persist until authenticated pruning. A failed write can leave an unreferenced generation. A sync failure after a switch reports uncertain durability.
+
+An encrypted backup copies one selected generation. The age header identifies its format. `recover --check` with the backup path and private key verifies decryptability. Anyone with the public recovery recipient can encrypt to it, so the provenance of a backup matters. A full backup of the state directory can include an open plaintext edit.
 
 ## Editing and limitations
 
-`config unlock` requires fresh authentication even with a cached session and
-writes exact source text to `STATE/edit/kubeconfig`, mode 0600. **This is plaintext
-on the state filesystem, not guaranteed RAM storage. It can survive logout,
-reboot, a crash, or ordinary lock.** Status exposes the edit and reports
-`fully_locked: false`. Save checks its generation, validates edits, preserves
-client selections where source selections were unchanged, and requires explicit
-acceptance of connection/trust/mapping changes. Validation failure retains the
-old vault and edit. Successful commit clears the session before deleting the
-edit; deletion failure is reported. Discard deletes the edit and clears cache.
-Successful save and discard wait for the edit directory to sync before
-reporting cleanup. If sync fails, inspect the paths in `status` before retrying.
+Opening an edit requires fresh authentication, even during an active session. The helper writes the original source with mode 0600 and remembers its authenticated generation, source and ciphertext digests, user IDs, and approved client settings. For an unchanged edit, it rechecks the generation and referenced CA files before cleanup. Locking or restarting the helper clears this in-memory comparison.
 
-Opening an edit also records its authenticated generation, ciphertext and source
-digests, public projection, record IDs, and source directory in helper memory.
-Closing a byte-identical edit checks the current generation and re-resolves its
-CA inputs against that record, including a second check while the edit is isolated.
-A match closes the plaintext edit and clears the session. Other edits take the
-verified save path. Lock and helper restart invalidate this comparison. The disk
-edit marker contains only the generation ID.
+A changed save authenticates the old vault, validates the edited config, wraps a fresh file key, and verifies decryption through the enrolled security key. Changes to connection settings, trust, or user mappings require explicit acceptance. The helper preserves client context and namespace selections when the corresponding source selections were unchanged. Embedded CA data is limited to parsed public certificate PEM blocks.
 
-After authentication, save renames the editable file to `STATE/edit/saving` and
-compares it with the text used to encrypt the candidate. A change aborts commit
-and preserves the plaintext. After commit, it checks the isolated file again
-before cleanup. A new file created at the original edit path is never deleted
-by save. Failure restores the isolated file only if the original path is absent.
-Otherwise both remain visible in `status.edit_paths` and block a new edit/save.
-An interrupted save can also leave the isolated file. Explicit discard removes
-both known paths. These safeguards do not synchronize arbitrary processes that
-retain writable descriptors: **close the editor before locking**. A write through
-such a descriptor after the final check can still race cleanup.
-
-Export requires fresh authentication. Export and offline recovery create portable
-plaintext configs with embedded public CA data; formatting/comments are not
-retained in these outputs. Ordinary editing preserves source text. Originals,
-recovery files, exports, editor artifacts, snapshots, and unsaved edits require
-separate protection. Deletion is not secure erasure on SSDs/snapshot filesystems.
-
-The input contract supports inline bearer tokens, verified HTTPS, public
-CA data/files, and standard named contexts. Legacy preferences stay in the
-encrypted source. Token files, client certificates, exec/auth-provider sources,
-extensions outside preferences, and unknown fields are rejected. No token is
-rotated. Client-go/Freelens can retain delivered tokens
-and existing streams after lock. Linux tests cover real kubectl, the Freelens
-Kubernetes proxy, and the Freelens 2.1.0 GUI with synthetic data. CI runs native
-tests on Apple Silicon and Intel macOS. Desktop browser and physical-key testing
-on macOS are pending.
-A physical USB YubiKey passed the [Linux hardware test](DEVELOPMENT.md#test-with-a-physical-yubikey).
-Typage’s WebAuthn API is experimental. The application has not had an independent
-security review.
-
-CA inputs must contain only valid public certificate PEM blocks and surrounding
-whitespace. Unexpected text, PEM headers, private keys, and malformed blocks are
-rejected. The public projection embeds re-encoded certificates only. This avoids
-copying unrelated contents of a mixed PEM file into the unencrypted projection.
-
-Setup enrols and verifies both recipients before changing the client path.
-For a matching original it reuses the verified ciphertext. A different legacy
-original is encrypted and checked with the authenticated recipients. The private
-receipt binds the resolved client path to the verified rollback ciphertext.
-The transaction locks the selected alias and target using client-go locks,
-checks the current bytes and file identity, and atomically replaces the target.
-A verified rollback is on disk before removing legacy plaintext or replacing
-a regular source. The separate rollback survives saves and history pruning.
-Authenticated unlink restores the exact source bytes as a private regular file.
-Stop arbitrary writers before switching files. Unlinking a plaintext directory
-entry cannot securely erase SSD blocks, filesystem snapshots or editor copies.
-
-Offline restore validates the embedded portable config before recreating the
-vault at new executable and state paths. Anyone with a public recovery recipient
-can encrypt data to it. Restore requires a backup obtained from trusted storage.
+During finalization the helper isolates the edit at `STATE/edit/saving` and compares it with the bytes used for the candidate. A concurrent change or failed verification preserves plaintext for recovery. It checks again after commit, clears the session, and syncs the edit directory before reporting successful cleanup. A file created at the original edit path during save is preserved. An editor can still write through an open descriptor, so close the editor before locking. [Recover an interrupted edit](README.md#if-a-save-is-interrupted)

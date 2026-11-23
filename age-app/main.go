@@ -242,42 +242,11 @@ func run(args []string) error {
 	seconds := f.Int("session-seconds", 3600, "absolute session lifetime (1–3600 seconds; new daemon only)")
 	browser := f.String("browser", "", "browser executable; default is open/xdg-open")
 	showVersion := f.Bool("version", false, "print the build version")
-	f.Usage = func() {
-		fmt.Fprintln(os.Stderr, `Kubeconfig Vault (experimental)
-Usage: kubeconfig-vault [global options] COMMAND
-
-setup [FILE]                          Protect the client config and its rollback copy
-restore VAULT.age [--key FILE]         Enroll a security key on a new laptop using an encrypted backup
-backup NEW-FILE                       Copy the encrypted vault for offline recovery
-recover VAULT.age --check             Check offline recovery without writing plaintext
-history prune --keep COUNT             Keep the active and newest encrypted generations
-config edit                           Open your editor and verify the saved changes
-recovery-key new FILE                  Create a new private offline recovery key
-recovery-key public FILE               Print only its public recipient
-import [SOURCE]                       Enroll a vault from ~/.kube/config or a selected file
-import SOURCE --recovery-key FILE      Enroll and verify a vault using an existing recovery key
-path kubeconfig|edit|vault              Print the path to an existing file
-credential ID                         Kubernetes exec entry point (not for humans)
-unlock | lock | status | stop          Manage the one-hour credential session
-config unlock                         Create a plaintext file for normal editing
-config lock [--accept-connection-changes]  Validate, encrypt, verify, and delete edit
-config discard                        Delete the unsaved plaintext edit
-config link [--kubeconfig FILE]       Attach the selected client config with encrypted rollback
-config unlink [--kubeconfig FILE]     Restore the original kubeconfig
-config repair [--kubeconfig FILE]     Rebuild a missing generated config for a linked client
-export NEW-FILE                        Fresh authentication; portable plaintext export
-recover VAULT.age --out NEW-FILE       Paste your recovery key at a hidden prompt
-recover VAULT.age --key FILE --out NEW-FILE  Recover using a private key file
-serve                                 Foreground daemon for troubleshooting
-
-Global options must precede COMMAND. Import preserves the original source.
-Lock and stop preserve open edits; status reports fully_locked=false in that case.`)
-		f.PrintDefaults()
-	}
+	var showHelp bool
+	f.BoolVar(&showHelp, "h", false, "show help")
+	f.BoolVar(&showHelp, "help", false, "show help")
+	f.Usage = func() { fmt.Fprintln(f.Output(), "Run kubeconfig-vault --help for usage.") }
 	if err := f.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
 		return errors.New("invalid command options")
 	}
 	if *showVersion {
@@ -285,9 +254,23 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		return nil
 	}
 	a := f.Args()
-	if len(a) == 0 {
-		f.Usage()
-		return nil
+	if showHelp || len(a) == 0 {
+		return printHelp(os.Stdout, a)
+	}
+	if a[0] == "help" {
+		return printHelp(os.Stdout, a[1:])
+	}
+	if last := a[len(a)-1]; last == "--help" || last == "-h" {
+		return printHelp(os.Stdout, a[:len(a)-1])
+	}
+	if len(a) == 1 && a[0] == "config" {
+		return printHelp(os.Stdout, a)
+	}
+	if a[0] == "edit" {
+		if len(a) != 1 {
+			return errors.New("usage: kubeconfig-vault edit")
+		}
+		a = []string{"config", "edit"}
 	}
 	if *seconds < 1 || *seconds > 3600 {
 		return errors.New("session lifetime must be 1–3600 seconds")
@@ -364,14 +347,32 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		s := &service{state: *state}
 		return s.printStatus(len(a) == 2 || !term.IsTerminal(int(os.Stdout.Fd())))
 	}
-	if err = privateDir(*state); err != nil {
-		return err
-	}
 	executable, err := os.Executable()
 	if err != nil {
 		return errors.New("cannot resolve application executable")
 	}
 	s := &service{state: *state, executable: installedCommand(executable), browser: *browser, ttl: time.Duration(*seconds) * time.Second, stop: make(chan struct{})}
+	if a[0] == "setup" && len(a) > 1 && a[1] == "--check" {
+		path, err := setupPath(a[2:])
+		if err != nil {
+			return err
+		}
+		entry, err := clientEntry(s.state, path)
+		if err != nil {
+			return err
+		}
+		if s.isLinked(entry) {
+			return errors.New("client already linked; use kubeconfig-vault status")
+		}
+		if err := s.validateInput(path, entry); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "Supported kubeconfig. No files changed.")
+		return nil
+	}
+	if err = privateDir(*state); err != nil {
+		return err
+	}
 	if a[0] == "serve" {
 		if len(a) != 1 {
 			return errors.New("unexpected serve argument")

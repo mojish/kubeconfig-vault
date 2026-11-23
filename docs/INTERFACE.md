@@ -1,158 +1,83 @@
-# CLI and kubeconfig reference
+# CLI reference
 
-## Options
+The general form is `kubeconfig-vault [global options] COMMAND`. Put global options before the command. For a first installation, start with `setup`. Use `help COMMAND` or `COMMAND --help` for focused guidance. For a worked example of editing or recovery, see the [user guide](README.md).
 
-`--version` prints the packaged release version. Source builds report `dev`.
+## Setup and client files
 
-The installed command is `kubeconfig-vault`.
-
-The default state directories are `~/.local/share/kube-unlock-age` on Linux and
-`~/Library/Application Support/kube-unlock-age` on macOS. `--state-dir` selects a
-private directory; Unix socket limits also constrain its path length.
-`--session-seconds` accepts 1–3600, default 3600, and affects only a new daemon.
-`--browser` selects one executable without shell arguments; otherwise Linux uses
-`xdg-open`, macOS `open`. Stop the daemon before changing these settings.
-The executable receives a private HTML `file:` URI. It must open local HTML files
-and follow their redirect to localhost. No launch capability appears in arguments.
-
-## Commands
-
-| Command | Result |
+| Command | Effect |
 | --- | --- |
-| `recovery-key new FILE` | Exclusive private hybrid age identity file; no secret stdout |
-| `recovery-key public FILE` | Public recipient only |
-| `setup [FILE]` | Enroll if needed, verify encrypted rollback and attach a single client file |
-| `backup NEW-FILE` | Copy the current ciphertext for portable offline recovery |
-| `recover VAULT.age [--key FILE] --check` | Verify recovery and config validation in memory |
-| `restore VAULT.age [--key FILE]` | Restore into an unused state directory with fresh security-key enrollment and the same recovery key |
-| `history prune --keep COUNT` | Fresh authentication, then retain the active and newest generations, COUNT total |
-| `config edit` | Run the configured foreground editor, then encrypt and verify changes |
-| `import [SOURCE]` | Import from `~/.kube/config` by default, confirm recovery backup, then enroll and verify the vault |
-| `import SOURCE --recovery-key FILE` | Enroll and verify the vault using an existing private key file |
-| `path kubeconfig` / `path edit` / `path vault` | Print only the absolute path to the selected file |
-| `status [--json]` | Passive status, including `configured` and `helper_running`. Human-readable session state on a terminal, JSON when piped or requested. JSON includes session state, expiry, primary `edit_path`, all `edit_paths`, and `fully_locked` |
-| `unlock` | Fresh browser authentication and an absolute credential session |
-| `lock` / `stop` | Cancel authentication and clear cache; stop also exits daemon |
-| `config unlock` | Fresh authentication and a plaintext edit file |
-| `config lock [--accept-connection-changes]` | Validate, encrypt, verify, commit, delete edit |
-| `config discard` | Delete normal and interrupted-save edits and clear cache |
-| `config link [--kubeconfig FILE]` | Link the default config or a selected file to the generated client config |
-| `config repair [--kubeconfig FILE]` | Authenticate and restore a missing generated config for an already linked client |
-| `config unlink [--kubeconfig FILE]` | Restore the backed-up entry, or remove the managed link if it had no original |
-| `export NEW-FILE` | Fresh authentication and portable plaintext export |
-| `recover VAULT.age --out NEW-FILE` | Offline recovery. Paste the key at a hidden terminal prompt. |
-| `recover VAULT.age --key FILE --out NEW-FILE` | Offline recovery using an existing private key file |
-| `credential ID` | ExecCredential v1 JSON, expiring within 60 seconds or earlier at the helper deadline or a recognized JWT expiry |
-| `serve` | Foreground daemon for troubleshooting |
+| `setup [FILE]` | Validate one source, enroll the key if needed, save an encrypted rollback, and link the client path. Safe to repeat after an interrupted setup. |
+| `setup --check [FILE]` | Validate the input format locally. Reads the selected file and any referenced public CA. Leaves the filesystem untouched and skips browser enrollment and API connectivity checks. |
+| `import [SOURCE]` | Create a vault from a source file and leave the source in place. Defaults to `~/.kube/config`. The original still contains the original credentials. |
+| `import SOURCE --recovery-key FILE` | Import using a private recovery key you already hold. Useful without a controlling terminal. |
+| `config link [--kubeconfig FILE]` | Attach a client path to an existing vault. An existing supported source gets an encrypted rollback. A previously empty path gets a receipt recording that fact. |
+| `config unlink [--kubeconfig FILE]` | Restore the original at that path, or detach a link whose path was originally empty. |
+| `config repair [--kubeconfig FILE]` | Authenticate and rebuild a missing generated kubeconfig for an already linked client. |
 
-Interactive setup and import reveal the key on the controlling terminal. Type
-`verify` to paste a copy from your saved backup with input hidden. A mismatch
-cancels before enrollment. Type `saved` to acknowledge the backup and proceed
-directly. Without a controlling terminal, use `--recovery-key FILE` for import
-or `--key FILE` for recovery. Commands that use file paths never put the key in
-their arguments. `path` needs no daemon or browser and fails if the requested
-file is absent. An interrupted edit is listed by `status`, not selected by `path edit`.
+`setup`, `config link`, `config unlink` and `config repair` use the single file selected by `KUBECONFIG`, or `~/.kube/config` by default. If `KUBECONFIG` lists multiple files, select one explicitly. Existing aliases to a source follow the link at its resolved target. Setup prints the target before replacing it. Relative CA paths resolve against the selected client path.
 
-On an incomplete vault or an unresponsive helper, `status` exits with code 1.
-Both human and JSON output report known plaintext edits and a suggested next
-action. In JSON, `problems` and `next_action` describe the failure.
-`fully_locked: false` also covers uncertainty. While automatic prompts are
-paused, `automatic_unlock_paused_until` gives the UTC deadline.
+Setup and link store the encrypted original next to its target as `FILE.before-kubeconfig-vault.age`. A private receipt binds the target path to that backup’s digest. Keep both until unlink completes. After an interrupted setup, keep the original and rollback in place and repeat setup. A stale client-go `.lock` file can survive a killed writer. Confirm that every Vault and kubectl writer for that file has exited before removing the stale lock.
 
-For `config repair`, select the same linked file you used for setup. An existing
-generated file, an open edit, or a client path pointing elsewhere prevents
-repair. Approval rebuilds the generated client file from the selected encrypted
-generation, including its saved context and namespaces. Local selection changes
-since the encrypted save may need to be repeated. A missing client link or
-encrypted vault requires a different recovery path. See the README's backup
-and recovery instructions.
+## Sessions and editing
+
+| Command | Effect |
+| --- | --- |
+| `status [--json]` | Inspect the helper, active generation, and known plaintext edit paths. Works while the helper is stopped. |
+| `unlock` | Authenticate now and start a new credential session, including during an automatic prompt pause. |
+| `lock` / `stop` | Cancel pending authentication and clear the cached session. `stop` also exits the helper. Both preserve open edits. |
+| `edit` (also `config edit`) | Open a private edit in your editor and attempt to verify and encrypt it when the editor exits successfully. |
+| `config unlock` | Authenticate and create a plaintext file for editing separately. |
+| `config lock [--accept-connection-changes]` | Validate and save the edit, verify the new vault, and remove the plaintext. The flag approves reviewed changes to connection, trust, or user mapping. |
+| `config discard` | Delete the unsaved edit and any interrupted-save copy, and clear the session. |
+| `path kubeconfig` / `path edit` / `path vault` | Print the path of the requested existing file. `status` lists interrupted-save paths. |
+
+The editor comes from `VISUAL`, then `EDITOR`, then `vi`. An executable path can contain spaces. When specifying arguments, separate them with whitespace. The helper adds `--wait` to supported GUI editors. An unsuccessful editor exit preserves the edit. `config lock` reports `changed: false` if the authenticated original and current inputs still match, or `changed: true` after publishing a new save.
+
+## Backups and recovery
+
+| Command | Output or result |
+| --- | --- |
+| `backup NEW-FILE` | A copy of the current encrypted generation. Can succeed even if the generated client file is damaged. |
+| `recover VAULT.age [--key FILE] --check` | Verify an encrypted backup and the offline key in memory. |
+| `recover VAULT.age [--key FILE] --out NEW-FILE` | Decrypt a trusted backup into a new portable plaintext kubeconfig. |
+| `restore VAULT.age [--key FILE]` | In an unused state directory, enroll a security key using the trusted backup and its offline key. |
+| `export NEW-FILE` | Authenticate with the security key and export the latest portable plaintext config. |
+| `history prune --keep COUNT` | Authenticate and retain the active generation plus the newest others, up to the requested count. An open edit blocks pruning. Separate backups and rollback copies are preserved. |
+| `recovery-key new FILE` / `recovery-key public FILE` | Create a private hybrid age key file, or print its public recipient. Normal setup generates a recovery key for you. |
+
+For `recover` and `restore`, omitting `--key FILE` opens a hidden terminal prompt. File-based recovery identities must belong to you, have private permissions and have no hard links. Backup, recovery and export require unused output filenames. Portable exports embed public CAs and can differ from the original formatting.
+
+## Status and repair
+
+On a terminal, `status` prints a human-readable result. A pipe or `--json` selects JSON. A healthy inspection exits with code 0, including before setup. An unsafe path, incomplete generation or unavailable helper produces a degraded report and exits with code 1.
+
+| JSON field | Meaning |
+| --- | --- |
+| `configured`, `helper_running`, `unlocked` | Whether the expected generation files are present and pass metadata checks, a helper answered, and a credential session is open, respectively. |
+| `expires_at`, `automatic_unlock_paused_until` | UTC deadlines when a session is active or automatic prompting is paused. |
+| `edit_open`, `edit_path`, `edit_paths` | Known plaintext edits, including an interrupted save. Preserve wanted changes before discarding. |
+| `fully_locked` | False for an open session, a detected plaintext edit, or uncertainty during inspection. |
+| `problems`, `next_action` | The observed failures and a suggested next step on a degraded vault. |
+
+Repair requires an already linked client, a missing generated file, readable encrypted state, and no open edit. It authenticates with the security key and rechecks the selected link and generation before publishing. It refuses to overwrite an existing entry. [Recovery options](README.md#choose-a-recovery-path)
 
 ## Supported kubeconfig inputs
 
-Import takes one single-document v1 Config, up to 4 MiB, without `KUBECONFIG`
-merging. Inline bearer tokens, verified HTTPS, supported public cluster fields,
-and named contexts are accepted. Legacy `preferences` are kept in the encrypted
-editable source and omitted from generated client files and recovery exports.
-Token files, client certificates, exec/auth-provider, extensions outside
-`preferences`, and unknown fields fail without executing any imported command.
-For these authentication methods select a file with inline bearer tokens.
-Setup validates a selected source before requesting security-key approval,
-including when attaching a different file to an existing vault.
-The generated kubeconfig contains the proxy address in readable form. Use an
-HTTP, HTTPS, or SOCKS5 `proxy-url` without embedded credentials, a query, or a
-fragment.
-Standalone import rejects symlink sources. Setup preserves client symlinks by managing their resolved regular target. Both reject symlink CA and recovery files. Recovery identities
-must be owned by this user, mode 0600, and not hard-linked. Outputs never overwrite.
-CA data accepts certificate PEM blocks only, without PEM headers or unrelated
-contents. Both generated and portable configurations must fit the 4 MiB reader
-limit after embedding CAs. Oversized candidates are rejected before commit.
+- **File** — one Kubernetes `v1` `Config` document, up to 4 MiB. The generated and portable versions must also fit after CAs are embedded.
+- **Authentication** — one inline `token` **or** both `client-certificate-data` and `client-key-data` per user. Different users in one file can use different methods. Certificate inputs must be complete base64-encoded PEM, with an end-user certificate first and a matching unencrypted private key. CA signing keys and certificates restricted to server use are rejected. The helper checks the leaf validity period when serving a credential. File-based user credentials, username/password, exec plugins, and auth providers are unsupported.
+- **TLS and proxies** — verified HTTPS with system trust or a public CA certificate supplied inline or by file. CA inputs must contain public certificate PEM blocks only. Supported proxy schemes are HTTP, HTTPS and SOCKS5. The proxy address is copied into the readable client file, so credentials, query strings and fragments are rejected.
+- **Contexts** — named clusters, users and contexts with valid references. Clients can update the current context and namespace. The encrypted editable source preserves legacy `preferences`. The generated client file and portable export omit them.
+- **Paths and fields** — standalone import expects a regular source file. Setup can handle an existing source symlink. CA and recovery-key file inputs reject symlinks. Unknown fields and extensions outside `preferences` fail validation.
 
-Close the editor before `config lock`. A detected concurrent change fails the
-save and preserves plaintext. A failure after commit explicitly says the vault
-was saved. An interrupted finalization can leave `STATE/edit/saving`. Either
-edit path keeps `fully_locked` false. Inspect every returned `edit_paths` entry
-and preserve desired text before explicit discard. Ordinary lock/stop preserve
-both paths. See [editing](DEVELOPMENT.md#interrupted-edits) for recovery.
+## Global options and client integration
 
-`config lock` returns `changed: false` when the helper verifies that an edit
-still matches the generation opened for editing. No new generation or second
-browser page is needed. A committed save returns `changed: true`. Restarting
-or locking the helper during an edit discards its in-memory comparison and
-requires the usual authenticated save. Both successful paths clear the session.
+| Option | Meaning |
+| --- | --- |
+| `--version` | Print the packaged release version. Source builds normally report `dev`. |
+| `--state-dir PATH` | Choose a private state directory. Defaults to `~/.local/share/kube-unlock-age` on Linux or `~/Library/Application Support/kube-unlock-age` on macOS. Long paths can exceed the OS Unix socket limit. |
+| `--session-seconds N` | Set the absolute session lifetime for a new helper. Range 1–3600. Default 3600. |
+| `--browser PATH` | Choose a browser launcher executable with no arguments. Defaults to `xdg-open` on Linux and `open` on macOS. The launcher must accept a private local HTML file and follow its redirect to localhost. |
 
-The generated `STATE/current/kubeconfig` uses an absolute binary path, exec v1,
-`interactiveMode: Never`, and `provideClusterInfo: true`. Clients may change
-namespace/current-context; other mutations are checked before credential release.
-The order of named clusters, users and contexts can change. Generated exec
-environment lists may be absent, null or empty. A nonempty list, a different
-command or argument sequence, or a changed binding fails validation.
-Exec requests support absent/null cluster extensions and reject nonempty ones;
-see [upstream exec types](https://github.com/kubernetes/client-go/blob/master/pkg/apis/clientauthentication/v1/types.go).
+Stop a running helper before changing its browser or session settings. `serve` runs the helper in the foreground for diagnostics.
 
-The current vault metadata format is version 1.
-Encrypted generations are retained until explicitly pruned. Pruning refuses to run with an open edit. Standalone backups and encrypted rollback copies remain usable after pruning. See
-[editing and limitations](ARCHITECTURE.md#editing-and-limitations).
-
-## Client kubeconfig link
-
-`config link` changes `~/.kube/config` only when asked and only after an import.
-It targets `STATE/current/kubeconfig`, which stays at the same path across edits.
-kubectl still honors `KUBECONFIG` and `--kubeconfig`. If a client already
-references another file, use `config link --kubeconfig FILE` and the same flag
-with `config unlink`. A client using an imported copy needs a file reference
-for the link to affect it.
-
-Setup and link store the original as `FILE.before-kubeconfig-vault.age`. A private
-receipt in the vault directory records its digest and resolved client path. Keep
-both for authenticated unlink. A missing or substituted backup stops restoration.
-
-If the client path was empty, `config link` records that fact before creating
-its symlink. `config unlink` can then remove the symlink and its receipt.
-After an interruption that leaves only the receipt, repeat `config link` to
-attach the client or `config unlink` to finish detaching it. A replacement
-client file or conflicting backup is preserved.
-
-If both the receipt and original backup are missing, Vault keeps the symlink.
-Locate the original backup before trying to detach the client.
-
-For multiple files in `KUBECONFIG`, pass one path to setup. Use
-`config unlink --kubeconfig FILE` for a file selected explicitly. With a single
-`KUBECONFIG` entry, setup, link and unlink select that file automatically.
-Referenced CA paths are resolved against the selected client path. Existing symlinks
-are preserved and the final target becomes the managed link. Changing that target
-affects every other reference to it. Close other editors before setup or unlink.
-
-When setup reports interruption, leave the
-original and encrypted backup in place and rerun. A killed client or helper
-can leave a client-go `.lock` file. After confirming that every Vault or
-kubectl config writer using that file has exited, remove its stale lock and retry.
-
-Restore accepts only a trusted backup and its recovery key. It rebuilds a portable
-config with embedded CAs. Source formatting and relative file references are
-specific to the original laptop. Use authenticated unlink there for exact bytes.
-
-`config edit` uses VISUAL, then EDITOR, then vi. It accepts an executable path
-or an executable with whitespace-separated arguments. It supplies `--wait` to
-known GUI editors. For other launchers configure their foreground option.
-An unsuccessful editor exit leaves the edit open. Use the reported edit path
-and `config lock` to finish, or explicitly discard it.
+Kubernetes clients invoke `credential ID` through the generated exec configuration. It uses an absolute executable path, `client.authentication.k8s.io/v1`, `interactiveMode: Never`, and `provideClusterInfo: true`. The helper checks the requested cluster against the approved binding before returning an `ExecCredential`. Named entry order and an absent, null or empty exec environment are equivalent. Changed commands, argument order, nonempty exec environments and per-cluster exec extensions fail validation. [Credential flow](ARCHITECTURE.md#one-kubernetes-request)

@@ -18,7 +18,10 @@ const sealedSuffix = configBackupSuffix + ".age"
 // original path as the base for relative CA paths, as client-go does.
 func clientEntry(state, path string) (string, error) {
 	root, err := filepath.EvalSymlinks(state)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		// Input checks can run before the state directory exists.
+		root = state
+	} else if err != nil {
 		return "", err
 	}
 	generated := filepath.Join(state, "current", "kubeconfig")

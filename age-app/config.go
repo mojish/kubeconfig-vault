@@ -44,7 +44,7 @@ type execConfig struct {
 // client-go writes env: null even when no environment overrides exist.
 type emptyExecEnv struct{}
 
-var errExecEnv = errors.New("users[].user.exec.env must be empty in a generated kubeconfig; setup requires inline bearer tokens")
+var errExecEnv = errors.New("users[].user.exec.env must be empty in a generated kubeconfig; setup requires inline bearer tokens or embedded client certificates")
 
 func (*emptyExecEnv) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind == yaml.SequenceNode && len(n.Content) == 0 {
@@ -54,8 +54,10 @@ func (*emptyExecEnv) UnmarshalYAML(n *yaml.Node) error {
 }
 
 type auth struct {
-	Token string      `json:"token,omitempty" yaml:"token,omitempty"`
-	Exec  *execConfig `json:"exec,omitempty" yaml:"exec,omitempty"`
+	CertData string      `json:"client-certificate-data,omitempty" yaml:"client-certificate-data,omitempty"`
+	KeyData  string      `json:"client-key-data,omitempty" yaml:"client-key-data,omitempty"`
+	Token    string      `json:"token,omitempty" yaml:"token,omitempty"`
+	Exec     *execConfig `json:"exec,omitempty" yaml:"exec,omitempty"`
 }
 type namedCluster struct {
 	Name    string  `json:"name" yaml:"name"`
@@ -84,9 +86,10 @@ type config struct {
 	Preferences map[string]any `json:"preferences,omitempty" yaml:"preferences,omitempty"`
 }
 type record struct {
-	ID       string   `json:"id"`
-	Token    string   `json:"token"`
-	Bindings []string `json:"bindings"`
+	Certificate *clientCertificate `json:"client_certificate,omitempty"`
+	ID          string             `json:"id"`
+	Token       string             `json:"token"`
+	Bindings    []string           `json:"bindings"`
 }
 type metadata struct {
 	Version  int    `json:"version"`
@@ -132,11 +135,11 @@ func configDecodeError(err error) error {
 	if errors.As(err, &fields) {
 		for _, detail := range fields.Errors {
 			if strings.HasSuffix(detail, " not found in type main.execConfig") {
-				return errors.New("unsupported users[].user.exec configuration; setup requires inline bearer tokens")
+				return errors.New("unsupported users[].user.exec configuration; setup requires inline bearer tokens or embedded client certificates")
 			}
-			for _, field := range []string{"tokenFile", "auth-provider", "client-certificate", "client-certificate-data", "client-key", "client-key-data", "username", "password"} {
+			for _, field := range []string{"tokenFile", "auth-provider", "client-certificate", "client-key", "username", "password"} {
 				if strings.HasSuffix(detail, ": field "+field+" not found in type main.auth") {
-					return fmt.Errorf("users[].user.%s is unsupported; select a kubeconfig with inline bearer tokens", field)
+					return fmt.Errorf("users[].user.%s is unsupported; select a kubeconfig with inline bearer tokens or embedded client certificates", field)
 				}
 			}
 		}
@@ -234,7 +237,7 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 	// extension data that must not reach a generated client file.
 	c.Preferences = nil
 	if len(c.Clusters) == 0 || len(c.Users) == 0 || len(c.Contexts) == 0 {
-		return nil, errors.New("clusters, token users, and contexts are required")
+		return nil, errors.New("clusters, credential users, and contexts are required")
 	}
 	clusters, users, contexts := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for i := range c.Clusters {
@@ -249,7 +252,7 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 			return nil, errors.New("cluster server must be an HTTPS URL without credentials, query, or fragment")
 		}
 		if v.Insecure {
-			return nil, errors.New("insecure-skip-tls-verify is not supported by this backend")
+			return nil, errors.New("clusters[].cluster.insecure-skip-tls-verify must be false; use a trusted CA")
 		}
 		if v.Proxy != "" {
 			u, e = url.Parse(v.Proxy)
@@ -276,7 +279,7 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 		if v.CA != "" {
 			ca, e := base64.StdEncoding.DecodeString(v.CA)
 			if e != nil {
-				return nil, errors.New("invalid public CA certificate data")
+				return nil, errors.New("clusters[].cluster.certificate-authority-data must be a complete base64-encoded PEM certificate bundle")
 			}
 			public, e := publicCertificates(ca)
 			clear(ca)
@@ -286,6 +289,15 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 			v.CA = base64.StdEncoding.EncodeToString(public)
 		}
 	}
+	// YAML aliases can repeat large credentials. A portable kubeconfig writes
+	// each value in full, so reject oversized inputs before parsing TLS pairs.
+	remaining := maxSource
+	for _, user := range c.Users {
+		remaining -= len(user.User.CertData) + len(user.User.KeyData) + len(user.User.Token)
+		if remaining < 0 {
+			return nil, errors.New("expanded user credentials exceed the kubeconfig size limit")
+		}
+	}
 	p := &payload{Source: string(source), Base: base, Records: map[string]record{}}
 	for _, n := range c.Users {
 		if n.Name == "" || users[n.Name] {
@@ -293,10 +305,23 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 		}
 		users[n.Name] = true
 		if n.User.Exec != nil {
-			return nil, errors.New("users[].user.exec is unsupported as an import source; select a kubeconfig with inline bearer tokens")
+			return nil, errors.New("users[].user.exec is unsupported as an import source; select a kubeconfig with inline bearer tokens or embedded client certificates")
 		}
-		if n.User.Token == "" || len(n.User.Token) > 65536 || strings.ContainsAny(n.User.Token, "\r\n") {
-			return nil, errors.New("only nonempty inline bearer-token users are supported")
+		var credential record
+		if n.User.CertData != "" || n.User.KeyData != "" {
+			if n.User.Token != "" {
+				return nil, errors.New("choose one authentication method per user: inline token or embedded client certificate")
+			}
+			cert, err := parseClientCertificate(n.User.CertData, n.User.KeyData)
+			if err != nil {
+				return nil, err
+			}
+			credential.Certificate = cert
+		} else {
+			if n.User.Token == "" || len(n.User.Token) > 65536 || strings.ContainsAny(n.User.Token, "\r\n") {
+				return nil, errors.New("user requires a nonempty inline token or an embedded client certificate and key")
+			}
+			credential.Token = n.User.Token
 		}
 		id := randomID()
 		if previous != nil {
@@ -304,7 +329,8 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 				id = old.ID
 			}
 		}
-		p.Records[n.Name] = record{ID: id, Token: n.User.Token}
+		credential.ID = id
+		p.Records[n.Name] = credential
 	}
 	for _, n := range c.Contexts {
 		if n.Name == "" || contexts[n.Name] || !clusters[n.Context.Cluster] || !users[n.Context.User] {

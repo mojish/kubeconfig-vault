@@ -22,8 +22,18 @@ func setupPath(args []string) (string, error) {
 	case 1:
 		return absolute(paths[0])
 	default:
-		return "", errors.New("KUBECONFIG selects multiple files; run setup FILE with one inline-token kubeconfig")
+		return "", errors.New("KUBECONFIG selects multiple files; run setup FILE with one kubeconfig")
 	}
+}
+
+func (s *service) validateInput(path, entry string) error {
+	data, err := readBounded(entry, maxSource, false)
+	if err != nil {
+		return err
+	}
+	defer clear(data)
+	_, err = prepare(data, filepath.Dir(path), s.state, s.executable, nil)
+	return err
 }
 
 func (s *service) startSetup(path string) error {
@@ -42,12 +52,7 @@ func (s *service) startSetup(path string) error {
 		return err
 	}
 	if id == "" {
-		data, err := readBounded(entry, maxSource, false)
-		if err != nil {
-			return err
-		}
-		defer clear(data)
-		if _, err = prepare(data, filepath.Dir(path), s.state, s.executable, nil); err != nil {
+		if err := s.validateInput(path, entry); err != nil {
 			return err
 		}
 		if present, err := existsEntry(entry + configBackupSuffix); err != nil || present {
