@@ -4,6 +4,8 @@ Unlock kubectl and Freelens with your YubiKey. Kubeconfig Vault encrypts your ex
 
 Use it on Linux or macOS with a kubeconfig that contains an inline bearer token or an embedded client certificate and private key, a verified HTTPS cluster, and a browser and security key that support WebAuthn PRF. Chrome with a USB YubiKey has been tested on Linux. Kubeconfigs that sign in through a cloud CLI or another exec plugin use a different sign-in flow. [Supported inputs](docs/INTERFACE.md#supported-kubeconfig-inputs)
 
+[Watch the one-minute walkthrough](docs/DEMO.md)
+
 ## Install and set up
 
 **1. Install the CLI.** Download the release installer and run it. It selects the binary for your OS and processor and installs it in `~/.local/bin`. The installer shows download, checksum and installation progress.
@@ -49,4 +51,4 @@ Keep the encrypted backup and the recovery key in separate safe places. Run `kub
 
 Release binaries cover Linux and macOS on x86-64 and ARM64. Linux testing includes a physical USB YubiKey and a separate Freelens desktop test. Hosted macOS tests use virtual authentication. Mac binaries are unnotarized. If Gatekeeper blocks a download, you can [build locally](docs/DEVELOPMENT.md#build-locally). Physical YubiKey and Freelens desktop testing on macOS and an independent security review are still pending. The project is experimental.
 
-[Where the keys and credentials live](docs/ARCHITECTURE.md) · [CLI reference](docs/INTERFACE.md) · [Build and test](docs/DEVELOPMENT.md) · [Report a security issue](SECURITY.md)
+[Tested platforms and open trials](docs/COMPATIBILITY.md) · [Compare credential workflows](docs/ALTERNATIVES.md) · [Where the keys and credentials live](docs/ARCHITECTURE.md) · [CLI reference](docs/INTERFACE.md) · [Build and test](docs/DEVELOPMENT.md) · [Report a security issue](SECURITY.md)

@@ -34,7 +34,7 @@ Freelens can share the same session when it reads the linked file. If it uses an
 | An unexpected unlock page | Choose **Decline request**. Automatic prompts pause for ten minutes. `kubeconfig-vault status` shows the deadline. |
 | The browser’s security-key prompt was dismissed | Automatic requests can retry after 30 seconds. Run `kubeconfig-vault unlock` to retry immediately. |
 | Yubico Authenticator has no entry for the vault | The vault creates a non-discoverable credential. A successful unlock tests it directly. |
-| A running client still works just after `lock` | The helper clears its cache immediately. A client can reuse a delivered credential for up to 60 seconds. An established watch, port-forward or shell can stay connected. For immediate containment, have the cluster administrator remove the affected identity’s access. |
+| A running client still works just after `lock` | The helper clears its session immediately. It asks clients to fetch credentials again within 60 seconds, or sooner if the session or a recognized credential expires. A client that honors this deadline can keep using its cached credential until refresh. A copied token or private key can still work for as long as the API server accepts it. An established watch, port-forward or shell can also stay connected. For urgent containment, contact the cluster administrator. |
 
 ## Edit and save
 

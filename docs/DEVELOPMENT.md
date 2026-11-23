@@ -50,6 +50,15 @@ node age-app/physical.test.mjs --preflight-only
 node age-app/physical.test.mjs --keep-key-connected
 ```
 
+To exercise embedded certificates, use the fixture from a checkout with Go available. Both commands generate a new client CA and key pair inside the test directory.
+
+```sh
+node age-app/physical.test.mjs --preflight-only --client-certificate
+node age-app/physical.test.mjs --keep-key-connected --client-certificate
+```
+
+The first command makes real kubectl requests against a loopback API that requires the generated client certificate. It also tries a client without the certificate and checks that the request fails. The second uses the same type of API to test enrollment, session reuse and recovery with a physical key.
+
 The default test binary is `age-app/kubeconfig-vault`. Set `KUBE_UNLOCK_TEST_BINARY` to verify a specific download. Preflight checks the binary and runs kubectl against a dummy cluster without opening a browser. The hardware run prompts for enrollment and unlock, checks session reuse and offline recovery, and cleans up its temporary data. The key can stay connected throughout.
 
 ## Prepare a release

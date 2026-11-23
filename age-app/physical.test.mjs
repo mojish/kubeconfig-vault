@@ -11,7 +11,10 @@ import { createInterface } from "node:readline/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-const mode = process.argv.slice(2).join(" ");
+const flags = process.argv.slice(2);
+if (new Set(flags).size !== flags.length) throw new Error("Repeat each option at most once");
+const useCertificate = flags.includes("--client-certificate");
+const mode = flags.filter(flag => flag !== "--client-certificate").join(" ");
 if (!["", "--preflight-only", "--keep-key-connected", "--macos-freelens"].includes(mode))
   throw new Error("Choose --preflight-only, --keep-key-connected, or --macos-freelens");
 const preflightOnly = mode === "--preflight-only";
@@ -32,9 +35,9 @@ const chrome = process.env.KUBE_UNLOCK_TEST_CHROME || (process.platform === "dar
   ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
 const chromeArgs = [`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check",
   "--disable-sync", "--disable-background-networking", "--disable-component-update", "--password-store=basic"];
-const token = "synthetic-" + randomBytes(24).toString("hex");
+const token = useCertificate ? undefined : "synthetic-" + randomBytes(24).toString("hex");
 const children = [], abort = new AbortController();
-let server, terminal, authenticatedNamespaceLists = 0, stage = "preflight";
+let server, terminal, authenticatedNamespaceLists = 0, rejectedCredentials = 0, stage = "preflight";
 const interrupt = () => abort.abort();
 process.on("SIGINT", interrupt);
 process.on("SIGTERM", interrupt);
@@ -178,9 +181,26 @@ try {
     "-config", tlsConfig], { encoding: "utf8", timeout: 15000 });
   assert.ok(made.status === 0, "dummy TLS fixture failed");
   const certificate = await readFile(cert);
+  // Keep the default token harness usable as a single downloadable script.
+  const identity = useCertificate
+    ? await (await import("./test-support/client-certificate.mjs")).clientCertificateFixture(root)
+    : undefined;
+  const user = identity ? {
+    "client-certificate-data": identity.clientCert.toString("base64"),
+    "client-key-data": identity.clientKey.toString("base64"),
+  } : { token };
+  function checkProjection(text) {
+    assert.ok(!text.includes(identity ? user["client-key-data"] : token), "credential found in client config");
+    assert.ok(!text.includes("client-key-data"), "private key field found in client config");
+  }
   stage = "starting the loopback HTTPS API";
-  server = https.createServer({ key: await readFile(key), cert: certificate }, (req, res) => {
-    if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401).end(); return; }
+  server = https.createServer({ key: await readFile(key), cert: certificate, ...identity?.tls }, (req, res) => {
+    const permitted = identity ? identity.accepts(req) : req.headers.authorization === `Bearer ${token}`;
+    if (!permitted) {
+      rejectedCredentials++;
+      res.writeHead(401).end();
+      return;
+    }
     const uri = new URL(req.url, "https://localhost");
     const result = dummyAPI(req.method, uri.pathname);
     if (!result) { res.writeHead(404).end(); return; }
@@ -189,11 +209,12 @@ try {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result));
   });
+  if (identity) server.on("tlsClientError", () => { rejectedCredentials++; });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const original = JSON.stringify({ apiVersion: "v1", kind: "Config",
     clusters: [{ name: "synthetic", cluster: { server: `https://127.0.0.1:${server.address().port}`,
       "certificate-authority-data": certificate.toString("base64") } }],
-    users: [{ name: "synthetic", user: { token } }],
+    users: [{ name: "synthetic", user }],
     contexts: ["synthetic", "alternate"].map(name => ({ name, context: { cluster: "synthetic", user: "synthetic" } })),
     "current-context": "synthetic" });
   stage = "kubectl against the test API";
@@ -204,7 +225,15 @@ try {
     "--kubeconfig", source, "--cache-dir", join(root, "kubecache"), "get", "--raw=/api/v1/namespaces",
   ], 15_000));
   assert.equal(namespaces.items[0].metadata.name, "vault-test");
-  console.log("PASS: kubectl fetched the version and vault-test namespace from the local HTTPS API.");
+  // Prove that this fixture actually needs its selected credential.
+  const invalid = JSON.parse(original);
+  invalid.users[0].user = { token: "deliberately-invalid" };
+  const invalidPath = join(root, "invalid-config");
+  await writeFile(invalidPath, JSON.stringify(invalid), { mode: 0o600, flag: "wx" });
+  const beforeInvalid = rejectedCredentials;
+  await assert.rejects(kube(invalidPath, 15_000));
+  assert.ok(rejectedCredentials > beforeInvalid, "the fixture must observe a rejected credential");
+  console.log(`PASS: kubectl fetched the version and vault-test namespace with ${identity ? "mutual TLS" : "a bearer token"}. The control without valid credentials failed.`);
   if (!preflightOnly) {
     stage = "browser startup";
     if (!macGUI) {
@@ -233,7 +262,7 @@ try {
     console.log("WAIT: Complete all three numbered steps on the new Chrome enrollment page. Enter your PIN only in Chrome's security-key prompt.");
     await cli("import", source, "--recovery-key", recovery);
     assert.ok(await readFile(source, "utf8") === original, "dummy source changed");
-    assert.ok(!(await readFile(join(state, "current", "kubeconfig"), "utf8")).includes(token), "dummy token present in generated config");
+    checkProjection(await readFile(join(state, "current", "kubeconfig"), "utf8"));
     assert.ok(await launchCount() === 1, "unexpected enrollment launch count");
     console.log("PASS: physical-key enrollment and native YubiKey/recovery verification completed; dummy source preserved.");
     const clientConfig = macGUI ? source : join(state, "current", "kubeconfig");
@@ -242,7 +271,7 @@ try {
       console.log("WAIT: Approve the verification page to connect the temporary kubeconfig to its vault.");
       await cli("setup", source);
       assert.ok((await lstat(source)).isSymbolicLink(), "test kubeconfig was not linked");
-      assert.ok(!(await readFile(source, "utf8")).includes(token));
+      checkProjection(await readFile(source, "utf8"));
     }
     const beforeCold = await launchCount();
     stage = "cold kubectl unlock";

@@ -97,7 +97,9 @@ attention. Status can run before setup or while the helper is stopped.`
 		message = `kubeconfig-vault lock       End the helper's session. Open edits stay on disk.
 kubeconfig-vault unlock     Approve a new session, including during a prompt pause.
 
-A running client can reuse its last credential for up to 60 seconds.`
+Clients are asked to refresh within 60 seconds. Lock stops the helper issuing
+credentials until the next unlock. The API server decides how long a delivered
+credential works. Existing connections and unfinished plaintext edits can remain.`
 	case "config", "config unlock", "config lock", "config discard", "config link", "config unlink", "config repair":
 		message = configHelp
 	case "recovery", "restore", "recover", "backup", "export":

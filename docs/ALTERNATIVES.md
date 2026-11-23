@@ -1,0 +1,13 @@
+# Which credential workflow fits?
+
+Start with the credential your cluster accepts and the part of the workflow you want to protect.
+
+| What you want | How it works | Where to look |
+| --- | --- | --- |
+| Protect an existing inline token or embedded certificate/key pair with a security-key unlock | Kubeconfig Vault encrypts the config. After approval the helper returns the token or private key to kubectl or Freelens. Both clients can share the local session. A separately stored recovery key can decrypt a backup. | [How Vault handles keys](ARCHITECTURE.md) |
+| Use the operating system's keyring | One helper moves embedded certificate and key fields into the OS keychain. Another supplies either a token or a certificate/key pair through Kubernetes exec credentials. The encrypted-kubeconfig plugin documents keyring-backed, on-demand access-token decryption. | [kubectl-credentials-helper](https://github.com/plumber-cd/kubectl-credentials-helper) · [kube-creds-from-keyring](https://github.com/c00/kube-creds-from-keyring) · [kubectl-encrypted-kubeconfig](https://github.com/n4-de/kubectl-encrypted-kubeconfig) |
+| Run commands against an encrypted config, or generate configs from a source file | ekconf runs a command through a wrapper and documents shell aliases that preserve familiar commands. kubecfg supports age-encrypted source fields and renders ordinary kubeconfigs. Consider who can read the rendered config. | [ekconf](https://github.com/eznix86/ekconf) · [kubecfg](https://github.com/amimof/kubecfg) |
+| Keep TLS signing on the YubiKey | YubiKey Kube Proxy documents importing a certificate and private key into a PIV slot. Its local proxy performs mutual TLS using the device. Vault supplies the decrypted private key to the Kubernetes client for TLS. | [YubiKey Kube Proxy](https://github.com/dsp/yubikey-kube-proxy) |
+| Sign in through an identity provider trusted by the cluster | kubelogin opens the provider login and supplies OIDC credentials. Vouch documents configuring Kubernetes to trust a hardware-backed OIDC issuer. This path needs the API server to trust the issuer and the identity to have appropriate access. | [kubelogin](https://github.com/int128/kubelogin) · [Vouch](https://vouch.sh/docs/kubernetes/) |
+
+For example, if your administrator has already issued a token and you can only change your laptop, local storage and unlock are choices you control. If your requirement is to prevent software from obtaining a Kubernetes private key, look at where TLS signing happens. If you need the cluster to enforce sign-in policy, start with the cluster's identity provider.

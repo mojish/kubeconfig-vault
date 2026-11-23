@@ -49,6 +49,8 @@ curl -fL "https://raw.githubusercontent.com/mojish/kubeconfig-vault/$tag/age-app
   node physical.test.mjs --macos-freelens
 ```
 
+For a certificate trial, use a checkout containing the [certificate fixture](../age-app/test-support/client-certificate.mjs) and install Go. From the checkout root, run `node age-app/physical.test.mjs --preflight-only --client-certificate`, then `node age-app/physical.test.mjs --macos-freelens --client-certificate`. The single-file download above is sufficient for the token trial.
+
 Preflight checks the binary and uses kubectl against the test API. The desktop test then prints `WAIT` prompts. If Freelens is outside `/Applications/Freelens.app`, first set `KUBE_UNLOCK_TEST_FREELENS` to the executable inside its app bundle.
 
 | When the script asks | What to do | Evidence of success |

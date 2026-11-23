@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
+import { clientCertificateFixture } from "./test-support/client-certificate.mjs";
 import { chromeConnection } from "./test-support/cdp.mjs";
 
 const cwd = fileURLToPath(new URL(".", import.meta.url));
@@ -46,18 +47,10 @@ async function bootstrapTarget(uri){
 }
 
 async function startCertificateAPI(certificate, privateKey) {
-  const clientKeyFile = join(root,"client.key"), clientCertFile = join(root,"client.crt");
-  const issuer = join(root,"issuer.crt");
-  const generated = spawnSync("go",["run",join(cwd,"test-support","clientpki.go"),root],{
-    cwd,encoding:"utf8",timeout:90000,env:{...process.env,GO111MODULE:"off",GOTOOLCHAIN:"local"},
-  });
-  assert.equal(generated.status,0,"could not generate synthetic client TLS certificate: "+generated.stderr);
-  const verified = spawnSync("openssl",["verify","-purpose","sslclient","-CAfile",issuer,clientCertFile],{encoding:"utf8"});
-  assert.equal(verified.status,0,"synthetic issuer verification failed: "+verified.stdout+verified.stderr);
-  const clientKey = await readFile(clientKeyFile), clientCert = await readFile(clientCertFile);
-  const mtls = https.createServer({cert:certificate,key:privateKey,ca:await readFile(issuer),requestCert:true,rejectUnauthorized:true},(req,res)=>{
-    const peer = req.socket.getPeerCertificate();
-    if (!req.socket.authorized || peer.subject.CN !== "vault-client" || req.headers.authorization) {
+  const fixture = await clientCertificateFixture(root);
+  const { clientCert, clientKey } = fixture;
+  const mtls = https.createServer({cert:certificate,key:privateKey,...fixture.tls},(req,res)=>{
+    if (!fixture.accepts(req)) {
       res.writeHead(403).end();
       return;
     }
@@ -449,6 +442,12 @@ try {
   await cli("backup",backup);
   await writeFile(recovery,savedKey+"\n",{mode:0o600});
   assert.match(await cli("recover",backup,"--key",recovery,"--check"), /verified/);
+  const pagesBeforeOfflineRead = (await urls()).length;
+  const latest = join(root, "latest-offline");
+  await cli("recover",backup,"--key",recovery,"--out",latest);
+  assert.equal((await kube("synthetic",latest).promise).code, 0, "latest saved backup must authenticate");
+  assert.ok((await readFile(latest,"utf8")).includes(tokenB), "backup did not contain the saved credential");
+  assert.equal((await urls()).length, pagesBeforeOfflineRead, "offline access opened a browser");
   // A missing or substituted rollback must leave the working link in place.
   const safeRollback = await readFile(rollback);
   await rm(rollback);
