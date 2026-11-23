@@ -248,7 +248,10 @@ try {
   assert.notEqual(left.code,0);
   assert.notEqual((await right.promise).code,0);
   assert.equal((await urls()).length,dismissBefore+1);
-  assert.equal(JSON.parse(await cli("status")).unlocked,false);
+  const devicePause = JSON.parse(await cli("status"));
+  const deviceRemaining = Date.parse(devicePause.automatic_unlock_paused_until) - Date.now();
+  assert.equal(devicePause.unlocked, false);
+  assert.ok(deviceRemaining > 0 && deviceRemaining <= 30000);
   await call("Page.removeScriptToEvaluateOnNewDocument",{identifier:dismiss.identifier});
   await successful(launch(["unlock"]));
   console.log("PASS: two clusters share one approval; a dismissed prompt produces one page and explicit unlock can retry immediately.");
@@ -259,8 +262,18 @@ try {
   assert.notEqual(declined.code, 0);
   assert.notEqual((await queued.promise).code, 0);
   assert.equal((await urls()).length, beforeDecline + 1);
-  assert.equal(JSON.parse(await cli("status")).unlocked, false);
+  const paused = JSON.parse(await cli("status"));
+  const remaining = Date.parse(paused.automatic_unlock_paused_until) - Date.now();
+  assert.equal(paused.unlocked, false);
+  assert.ok(remaining > 570000 && remaining <= 600000);
+  for (const retry of await Promise.all([kube().promise, kube("second").promise])) {
+    assert.notEqual(retry.code, 0);
+    assert.ok(retry.stderr.includes(paused.automatic_unlock_paused_until));
+    assert.match(retry.stderr, /kubeconfig-vault unlock/);
+  }
+  assert.equal((await urls()).length, beforeDecline + 1);
   await successful(launch(["unlock"]));
+  assert.equal(JSON.parse(await cli("status")).automatic_unlock_paused_until, undefined);
   console.log("PASS: declining on the vault page rejects both clients and keeps the vault locked.");
 
   // Exercise one long-lived client-go process against the disposable API.
@@ -334,6 +347,37 @@ try {
   assert.notDeepEqual(await readFile(join(state,"current","vault.age")),initialGeneration);
   assert.equal((await successful(kube())).code,0);
   console.log("PASS: fresh edit authentication, visible plaintext state, failed-save preservation, verified encrypted save and cache invalidation.");
+
+  await cli("lock");
+  const repair = () => launch(["config","repair","--kubeconfig",source]);
+  const cipherBefore = await readFile(join(state,"current","vault.age"));
+  await successful(launch(["config","unlock"]));
+  await rm(generatedConfig);
+  const human = await launch(["status"], {terminal:true}).promise;
+  assert.equal(human.code, 1);
+  assert.match(human.stdout, /Vault status degraded/);
+  assert.ok(human.stdout.includes(edit));
+  const openEdit = await launch(["status","--json"]).promise;
+  const editStatus = JSON.parse(openEdit.stdout);
+  assert.equal(openEdit.code, 1);
+  assert.deepEqual(editStatus.edit_paths,[edit]);
+  assert.equal(editStatus.fully_locked,false);
+  const pagesBeforeRefusal = (await urls()).length;
+  assert.notEqual((await repair().promise).code, 0);
+  assert.equal((await urls()).length, pagesBeforeRefusal);
+  await cli("config","discard");
+  const damaged = await launch(["status","--json"]).promise;
+  assert.equal(damaged.code, 1);
+  assert.match(JSON.parse(damaged.stdout).next_action, /config repair/);
+  assert.notEqual((await complete(repair(), "decline")).code, 0);
+  await assert.rejects(stat(generatedConfig), {code:"ENOENT"});
+  await successful(repair());
+  assert.equal(await readlink(source), generatedConfig);
+  assert.deepEqual(await readFile(join(state,"current","vault.age")), cipherBefore);
+  assert.equal(kubectlConfig("current-context"), "second");
+  assert.equal(kubectlConfig("view","--minify","-o","jsonpath={.contexts[0].context.namespace}"), "vault-test");
+  assert.equal((await successful(kube())).code, 0);
+  console.log("PASS: declined repair preserved the missing file; authenticated repair restored kubectl access and saved selections.");
 
   const exported=join(root,"exported");await successful(launch(["export",exported]));assert.ok((await readFile(exported,"utf8")).includes(tokenB));
   await cli("lock");const cancelled=launch(["unlock"]);await waitFor(async()=>(await urls()).length>navigated,"pending authentication");

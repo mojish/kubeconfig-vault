@@ -41,6 +41,7 @@ type browserMessage struct {
 	Identity string   `json:"identity,omitempty"`
 	FileKey  []byte   `json:"fileKey,omitempty"`
 	Stanzas  []stanza `json:"stanzas,omitempty"`
+	Declined bool     `json:"declined,omitempty"`
 	Failed   bool     `json:"failed,omitempty"`
 }
 type browserPage struct {
@@ -63,6 +64,7 @@ type ceremony struct {
 	total         int
 	bootstrap     string
 	bootstrapOnce sync.Once
+	declined      atomic.Bool
 	launchFailed  atomic.Bool
 	reached       atomic.Bool
 }
@@ -214,6 +216,11 @@ func (c *ceremony) exchange(m browserMessage) (browserMessage, error) {
 	case <-c.ctx.Done():
 		return browserMessage{}, errors.New("browser authentication cancelled or timed out")
 	case r := <-c.reply:
+		if r.Declined {
+			clear(r.FileKey)
+			c.declined.Store(true)
+			return browserMessage{}, errRequestDeclined
+		}
 		if r.Failed || c.ctx.Err() != nil {
 			clear(r.FileKey)
 			return browserMessage{}, errors.New("browser authentication failed or was cancelled")
@@ -279,7 +286,12 @@ func (b browserKey) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
 	return r.FileKey, nil
 }
 
+var errRequestDeclined = errors.New("request declined on the vault page")
+
 func (c *ceremony) failure(err error) error {
+	if c.declined.Load() {
+		return errRequestDeclined
+	}
 	if c.launchFailed.Load() {
 		return errors.New("browser launcher exited before opening the page; stop the helper and retry with --browser PATH")
 	}

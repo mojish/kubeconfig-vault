@@ -20,10 +20,10 @@ curl -fL -o install.sh https://github.com/mojish/kubeconfig-vault/releases/lates
   sh install.sh
 ```
 
-If your vault is already set up with v0.2.x, run `kubeconfig-vault status`.
+If your vault is already set up, run `kubeconfig-vault status`.
 Your current vault and client paths work with the new binary.
-Restart any open Freelens or other long-running Kubernetes client during the
-upgrade to drop tokens cached under the previous version’s one-hour policy.
+If upgrading from v0.2.x or earlier, restart Freelens and other long-running
+Kubernetes clients to drop credentials cached under the older one-hour policy.
 
 For a new vault, close any editors writing your kubeconfig, then run:
 
@@ -63,7 +63,8 @@ linked file. To change a token, cluster address, or certificate, use the vault e
 
 If an unlock page appears unexpectedly, select **Decline request**. A background
 Kubernetes app can request access. Declining an automatic unlock leaves the vault
-locked. When you're ready, run `kubeconfig-vault unlock` to start a fresh request.
+locked and pauses automatic requests for 10 minutes. Run `kubeconfig-vault status`
+to see when the pause ends, or `kubeconfig-vault unlock` to unlock immediately.
 
 | To | Run |
 | --- | --- |
@@ -93,6 +94,11 @@ recovery key separately from that backup. Use a new filename for each backup.
 kubeconfig-vault backup cluster-backup.age
 kubeconfig-vault recover cluster-backup.age --check
 ```
+
+If kubectl or Freelens loses its linked configuration, run `kubeconfig-vault status`.
+If it reports a missing generated kubeconfig, run `kubeconfig-vault config repair`
+and approve with your security key. Repair restores the last encrypted save.
+You may need to select your context or namespace again.
 
 Backup also works if a client damaged or deleted the generated kubeconfig.
 The check asks for the recovery key in a hidden terminal prompt and verifies

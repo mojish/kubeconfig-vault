@@ -53,7 +53,7 @@ test("decline rejects the active step without calling WebAuthn or reviving an ol
   const click = h.elements["#decline"].click();
   const reply = h.waiting.shift();
   assert.equal(reply.url, "/api/reply");
-  assert.deepEqual(JSON.parse(reply.options.body), {id:page.request.id, failed:true});
+  assert.deepEqual(JSON.parse(reply.options.body), {id:page.request.id, declined:true});
   h.respond(reply, {});
   await click;
   h.respond(old, page);

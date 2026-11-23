@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 const statusTimeout = 2 * time.Second
@@ -22,87 +24,176 @@ type clientStatus struct {
 	EditPath      string   `json:"edit_path,omitempty"`
 	EditPaths     []string `json:"edit_paths,omitempty"`
 	Kubeconfig    string   `json:"kubeconfig"`
+	Problems      []string `json:"problems,omitempty"`
+	NextAction    string   `json:"next_action,omitempty"`
+	PausedUntil   string   `json:"automatic_unlock_paused_until,omitempty"`
 	ExpiresAt     string   `json:"expires_at,omitempty"`
 }
 
-// Check file metadata only. Authenticated contents are verified during unlock.
-func (s *service) configured() (bool, error) {
-	id, err := currentID(s.state)
-	if err != nil || id == "" {
-		return false, err
+func (v *clientStatus) problem(message, action string) {
+	v.Problems = append(v.Problems, message)
+	if v.NextAction == "" {
+		v.NextAction = action
 	}
-	generations := filepath.Join(s.state, "generations")
-	dir := filepath.Join(generations, id)
-	for _, path := range []string{generations, dir} {
-		if err := checkPrivateDir(path); err != nil {
-			return false, errors.New("active vault generation is missing or unsafe")
-		}
-	}
-	for _, name := range []string{"kubeconfig", "metadata.json", "vault.age"} {
-		info, err := os.Lstat(filepath.Join(dir, name))
-		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-			return false, errors.New("active vault generation is incomplete")
-		}
-	}
-	return true, nil
+	v.FullyLocked = false
 }
 
-// Query a running helper once. A passive status check must never start one.
+// Only inspect directory entries. Status never needs the contents of these files.
+func (s *service) inspectGeneration(v *clientStatus) {
+	id, err := currentID(s.state)
+	generations := filepath.Join(s.state, "generations")
+	if err == nil && id == "" {
+		if _, err := os.Lstat(generations); errors.Is(err, os.ErrNotExist) {
+			return
+		}
+	}
+	const recoverAction = "Preserve the vault directory. Check an encrypted backup with kubeconfig-vault recover BACKUP.age --check."
+	if err != nil || id == "" {
+		v.problem("active generation link is missing or invalid", recoverAction)
+		return
+	}
+	dir := filepath.Join(generations, id)
+	for _, path := range []string{generations, dir} {
+		if checkPrivateDir(path) != nil {
+			v.problem("active vault generation directory is missing or unsafe", recoverAction)
+			return
+		}
+	}
+	good := true
+	for _, file := range []struct {
+		name  string
+		limit int64
+	}{
+		{"vault.age", maxVault}, {"metadata.json", 65536}, {"kubeconfig", maxSource},
+	} {
+		var st unix.Stat_t
+		err := unix.Lstat(filepath.Join(dir, file.name), &st)
+		if err == nil && st.Mode&unix.S_IFMT == unix.S_IFREG && st.Mode&0077 == 0 && st.Mode&0400 != 0 &&
+			st.Nlink == 1 && st.Uid == uint32(os.Getuid()) && st.Size > 0 && st.Size <= file.limit {
+			continue
+		}
+		good = false
+		message := file.name + " is unsafe or unavailable"
+		if errors.Is(err, os.ErrNotExist) {
+			message = file.name + " is missing"
+		}
+		action := recoverAction
+		if file.name == "kubeconfig" && errors.Is(err, os.ErrNotExist) {
+			action = "For a linked client, run kubeconfig-vault config repair. For a custom path, add --kubeconfig FILE."
+		} else if err == nil && st.Mode&unix.S_IFMT == unix.S_IFREG && st.Uid == uint32(os.Getuid()) && st.Nlink == 1 && st.Mode&0400 == 0 {
+			action = "Restore owner read permission on the private file and rerun kubeconfig-vault status."
+		} else if file.name != "vault.age" {
+			action = "Preserve the encrypted vault with kubeconfig-vault backup NEW-FILE."
+		}
+		v.problem(message, action)
+	}
+	v.Configured = good
+}
+
+// If the socket was removed while the daemon still owns its lock, the
+// session state is unknown. Probe the lock without creating or reading it.
+func (s *service) stoppedHelper() error {
+	path := filepath.Join(s.state, "daemon.lock")
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("cannot inspect helper lock")
+	}
+	defer unix.Close(fd)
+	var st unix.Stat_t
+	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Nlink != 1 || st.Mode&0077 != 0 || st.Uid != uint32(os.Getuid()) {
+		return errors.New("unsafe helper lock")
+	}
+	if unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB) != nil {
+		return errors.New("helper lock is held or unavailable while its socket is missing")
+	}
+	return nil
+}
+
+func (s *service) liveStatus() (*clientStatus, error) {
+	socket, err := os.Lstat(s.socket())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, s.stoppedHelper()
+	}
+	if err != nil || socket.Mode()&os.ModeSocket == 0 {
+		return nil, errors.New("invalid helper socket")
+	}
+	deadline := time.Now().Add(statusTimeout)
+	conn, err := s.connect(deadline)
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return nil, errors.New("helper socket is present but no helper is listening")
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, s.stoppedHelper()
+	}
+	if err != nil {
+		return nil, errors.New("cannot connect to helper")
+	}
+	reply, err := exchangeRPC(conn, request{Op: "status"}, deadline)
+	if err != nil {
+		return nil, errors.New("helper did not return status")
+	}
+	var live clientStatus
+	if json.Unmarshal(reply, &live) != nil || live.Kubeconfig != filepath.Join(s.state, "current", "kubeconfig") {
+		return nil, errors.New("invalid helper status")
+	}
+	return &live, nil
+}
+
 func (s *service) inspectStatus() (clientStatus, error) {
-	offline := clientStatus{FullyLocked: true, Kubeconfig: filepath.Join(s.state, "current", "kubeconfig")}
+	v := clientStatus{FullyLocked: true, Kubeconfig: filepath.Join(s.state, "current", "kubeconfig")}
 	if err := checkPrivateDir(s.state); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return offline, nil
+			return v, nil
 		}
-		return clientStatus{}, err
-	}
-	configured, err := s.configured()
-	if err != nil {
-		return clientStatus{}, err
-	}
-	offline.Configured = configured
-	socket, err := os.Lstat(s.socket())
-	if err == nil {
-		if socket.Mode()&os.ModeSocket == 0 {
-			return clientStatus{}, errors.New("invalid helper socket")
+		v.problem("vault state directory is unsafe or unavailable", "Check the owner and permissions of the vault directory.")
+	} else {
+		paths, editErr := s.editPaths()
+		v.EditPaths = paths
+		if len(paths) > 0 {
+			v.EditOpen, v.FullyLocked, v.EditPath = true, false, paths[0]
 		}
-		deadline := time.Now().Add(statusTimeout)
-		conn, err := s.connect(deadline)
-		if err == nil {
-			reply, err := exchangeRPC(conn, request{Op: "status"}, deadline)
+		if editErr != nil {
+			v.problem(editErr.Error(), "Inspect the edit directory before changing any vault files.")
+		}
+		s.inspectGeneration(&v)
+		// An older helper may traverse the edit directory. Only ask when safe.
+		if editErr == nil {
+			live, err := s.liveStatus()
 			if err != nil {
-				return clientStatus{}, err
+				v.problem(err.Error(), "Run kubeconfig-vault serve to diagnose the helper. Press Ctrl-C to exit if it starts.")
+			} else if live != nil {
+				v.Unlocked, v.ExpiresAt, v.PausedUntil, v.HelperRunning = live.Unlocked, live.ExpiresAt, live.PausedUntil, true
+				v.EditOpen, v.EditPaths, v.EditPath = live.EditOpen, live.EditPaths, live.EditPath
+				for _, msg := range live.Problems {
+					v.problem(msg, "Inspect the edit directory before changing any vault files.")
+				}
+				v.FullyLocked = len(v.Problems) == 0 && live.FullyLocked && !v.EditOpen && !v.Unlocked
 			}
-			var live clientStatus
-			if err := json.Unmarshal(reply, &live); err != nil || live.Kubeconfig == "" {
-				return clientStatus{}, errors.New("invalid helper status")
-			}
-			live.Configured, live.HelperRunning = configured, true
-			return live, nil
 		}
-		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ECONNREFUSED) {
-			return clientStatus{}, err
+	}
+	if len(v.Problems) > 0 {
+		if v.EditOpen {
+			v.NextAction = "Preserve the plaintext edit before making repairs. " + v.NextAction
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return clientStatus{}, err
+		return v, errors.New("vault status degraded")
 	}
-	offline.EditPaths = s.editPaths()
-	if len(offline.EditPaths) > 0 {
-		offline.EditPath = offline.EditPaths[0]
-		offline.EditOpen, offline.FullyLocked = true, false
-	}
-	return offline, nil
+	return v, nil
 }
 
 func (s *service) printStatus(asJSON bool) error {
 	state, err := s.inspectStatus()
-	if err != nil {
+	if asJSON {
+		if e := json.NewEncoder(os.Stdout).Encode(state); e != nil {
+			return e
+		}
 		return err
 	}
-	if asJSON {
-		return json.NewEncoder(os.Stdout).Encode(state)
-	}
 	switch {
+	case err != nil:
+		fmt.Fprintln(os.Stdout, "Vault status degraded:", strings.Join(state.Problems, "; "))
 	case !state.Configured:
 		fmt.Fprintln(os.Stdout, "Not set up — run kubeconfig-vault setup.")
 	case state.Unlocked:
@@ -110,8 +201,14 @@ func (s *service) printStatus(asJSON bool) error {
 	default:
 		fmt.Fprintln(os.Stdout, "Session locked.")
 	}
+	if state.PausedUntil != "" {
+		fmt.Fprintln(os.Stdout, "Automatic unlock paused until", state.PausedUntil, "— run kubeconfig-vault unlock to retry now.")
+	}
 	if state.EditOpen {
 		fmt.Fprintln(os.Stdout, "Plaintext edit still open:", strings.Join(state.EditPaths, ", "))
 	}
-	return nil
+	if state.NextAction != "" {
+		fmt.Fprintln(os.Stdout, state.NextAction)
+	}
+	return err
 }

@@ -40,6 +40,7 @@ go vet ./...
 npm run test:ui
 npm run test:browser
 sh ../scripts/test-install.sh
+python3 -B ../scripts/test_public_install.py
 npm run audit:security
 ```
 
@@ -150,3 +151,11 @@ downloaded archive against the repository's build attestation:
 ```sh
 gh attestation verify kubeconfig-vault-linux-amd64.tar.gz --repo mojish/kubeconfig-vault
 ```
+
+
+The **Verify public installation** workflow runs after publication. It verifies
+the Linux x86-64 archive and installer with `gh release verify-asset`, runs
+the anonymously downloaded installer in a temporary home, compares the installed
+bytes with the verified archive, and checks both executable names. It tests the
+tagged download first, then the README's latest URL while the tag is current.
+Use the workflow's manual tag input to repeat the check for v0.3.1 or newer. Earlier installers always selected the latest archive.

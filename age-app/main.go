@@ -216,6 +216,11 @@ func printPath(state string, args []string) error {
 	default:
 		return errors.New(usage)
 	}
+	if args[0] == "edit" {
+		if err := checkPrivateDir(filepath.Dir(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	info, err := os.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
 		return errors.New(missing)
@@ -259,6 +264,7 @@ config lock [--accept-connection-changes]  Validate, encrypt, verify, and delete
 config discard                        Delete the unsaved plaintext edit
 config link [--kubeconfig FILE]       Attach the selected client config with encrypted rollback
 config unlink [--kubeconfig FILE]     Restore the original kubeconfig
+config repair [--kubeconfig FILE]     Rebuild a missing generated config for a linked client
 export NEW-FILE                        Fresh authentication; portable plaintext export
 recover VAULT.age --out NEW-FILE       Paste your recovery key at a hidden prompt
 recover VAULT.age --key FILE --out NEW-FILE  Recover using a private key file
@@ -423,7 +429,7 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		if a[1] == "edit" && len(a) == 2 {
 			return s.editConfig()
 		}
-		if a[1] == "link" || a[1] == "unlink" {
+		if a[1] == "link" || a[1] == "unlink" || a[1] == "repair" {
 			return s.clientLink(a[1], a[2:])
 		}
 	}

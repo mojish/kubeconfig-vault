@@ -39,6 +39,7 @@ and follow their redirect to localhost. No launch capability appears in argument
 | `config lock [--accept-connection-changes]` | Validate, encrypt, verify, commit, delete edit |
 | `config discard` | Delete normal and interrupted-save edits and clear cache |
 | `config link [--kubeconfig FILE]` | Link the default config or a selected file to the generated client config |
+| `config repair [--kubeconfig FILE]` | Authenticate and restore a missing generated config for an already linked client |
 | `config unlink [--kubeconfig FILE]` | Restore the backed-up entry, or remove the managed link if it had no original |
 | `export NEW-FILE` | Fresh authentication and portable plaintext export |
 | `recover VAULT.age --out NEW-FILE` | Offline recovery. Paste the key at a hidden terminal prompt. |
@@ -53,6 +54,20 @@ directly. Without a controlling terminal, use `--recovery-key FILE` for import
 or `--key FILE` for recovery. Commands that use file paths never put the key in
 their arguments. `path` needs no daemon or browser and fails if the requested
 file is absent. An interrupted edit is listed by `status`, not selected by `path edit`.
+
+On an incomplete vault or an unresponsive helper, `status` exits with code 1.
+Both human and JSON output report known plaintext edits and a suggested next
+action. In JSON, `problems` and `next_action` describe the failure.
+`fully_locked: false` also covers uncertainty. While automatic prompts are
+paused, `automatic_unlock_paused_until` gives the UTC deadline.
+
+For `config repair`, select the same linked file you used for setup. An existing
+generated file, an open edit, or a client path pointing elsewhere prevents
+repair. Approval rebuilds the generated client file from the selected encrypted
+generation, including its saved context and namespaces. Local selection changes
+since the encrypted save may need to be repeated. A missing client link or
+encrypted vault requires a different recovery path. See the README's backup
+and recovery instructions.
 
 ## Supported kubeconfig inputs
 

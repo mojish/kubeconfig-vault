@@ -97,6 +97,9 @@ func (s *service) clientLink(action string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if action == "repair" {
+		return s.clientAction(request{Op: "config-repair", Path: path})
+	}
 	if action == "link" {
 		if _, err := loadSnapshot(s.state); err != nil {
 			return errors.New("no valid vault; run setup first")

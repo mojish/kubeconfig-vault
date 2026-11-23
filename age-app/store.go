@@ -201,11 +201,7 @@ func loadGeneration(state, id string) (*snapshot, error) {
 	return s, nil
 }
 
-func loadGenerationSettings(state, id string) (*snapshot, error) {
-	dir := filepath.Join(state, "generations", id)
-	if err := checkPrivateDir(dir); err != nil {
-		return nil, err
-	}
+func loadMetadata(dir, id string) (*snapshot, error) {
 	b, err := readBounded(filepath.Join(dir, "metadata.json"), 65536, true)
 	if err != nil {
 		return nil, err
@@ -214,7 +210,19 @@ func loadGenerationSettings(state, id string) (*snapshot, error) {
 	if decodeJSON(b, &s.Meta) != nil || s.Meta.Version != 1 || len(s.Meta.Identity) > 16384 || !strings.HasPrefix(s.Meta.Identity, "AGE-PLUGIN-FIDO2PRF-") {
 		return nil, errors.New("invalid age vault metadata")
 	}
-	b, err = readBounded(filepath.Join(dir, "kubeconfig"), maxSource, true)
+	return s, nil
+}
+
+func loadGenerationSettings(state, id string) (*snapshot, error) {
+	dir := filepath.Join(state, "generations", id)
+	if err := checkPrivateDir(dir); err != nil {
+		return nil, err
+	}
+	s, err := loadMetadata(dir, id)
+	if err != nil {
+		return nil, err
+	}
+	b, err := readBounded(filepath.Join(dir, "kubeconfig"), maxSource, true)
 	if err != nil {
 		return nil, err
 	}
@@ -346,6 +354,9 @@ func parseRecovery(b []byte) (*age.HybridIdentity, error) {
 // original path is never deleted. Editors must be closed before locking: no
 // portable filesystem primitive can freeze an uncooperative open write handle.
 func (s *service) finalizeEdit(expected []byte, outcome string, commit func() error) error {
+	if err := checkPrivateDir(filepath.Dir(s.editPath())); err != nil {
+		return err
+	}
 	pending := s.pendingEditPath()
 	if _, err := os.Lstat(pending); !errors.Is(err, os.ErrNotExist) {
 		return errors.New("an interrupted save already exists; inspect status")
@@ -386,6 +397,10 @@ func (s *service) finalizeEdit(expected []byte, outcome string, commit func() er
 // Publish a complete file exclusively. A crash before the rename leaves
 // only a private staging directory and the original destination intact.
 func publishNew(path string, data []byte) error {
+	return publishNewChecked(path, data, nil)
+}
+
+func publishNewChecked(path string, data []byte, check func() error) error {
 	dir := filepath.Dir(path)
 	stage, err := os.MkdirTemp(dir, ".kubeconfig-vault-stage-")
 	if err != nil {
@@ -396,8 +411,16 @@ func publishNew(path string, data []byte) error {
 	if err := writeNew(file, data); err != nil {
 		return err
 	}
+	if check != nil {
+		if err := check(); err != nil {
+			return err
+		}
+	}
 	if err := renameNew(file, path); err != nil {
 		return err
 	}
-	return syncDir(dir)
+	if err := syncDir(dir); err != nil {
+		return errors.New("file published but directory sync failed; inspect the destination before retrying")
+	}
+	return nil
 }

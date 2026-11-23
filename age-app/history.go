@@ -16,7 +16,9 @@ func (s *service) prune(ctx context.Context, keep int) (any, error) {
 	if keep < 1 {
 		return nil, errors.New("keep at least one generation")
 	}
-	if len(s.editPaths()) != 0 {
+	if paths, err := s.editPaths(); err != nil {
+		return nil, err
+	} else if len(paths) != 0 {
 		return nil, errors.New("finish or discard the open edit before pruning")
 	}
 	_, snapshot, err := s.open(ctx, "Verify your vault before pruning old generations")

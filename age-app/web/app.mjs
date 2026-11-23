@@ -50,7 +50,7 @@ decline.addEventListener("click", async () => {
   const id = active.id;
   active.fileKey = ""; active = null;
   try {
-    await api("/api/reply", {id, failed:true});
+    await api("/api/reply", {id, declined:true});
     finish("Request declined. You can close this page.");
   } catch {
     finish("The local helper did not confirm the decline. You can close this page.");

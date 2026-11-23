@@ -75,7 +75,7 @@ type service struct {
 	epoch                      uint64
 	active                     context.CancelFunc
 	closed                     bool
-	retryAfter                 time.Time // accessed under the operation mutex
+	retryAfter                 time.Time // protected by mu
 	stop                       chan struct{}
 }
 
@@ -87,22 +87,36 @@ func (s *service) expireLocked() {
 }
 func (s *service) editPath() string        { return filepath.Join(s.state, "edit", "kubeconfig") }
 func (s *service) pendingEditPath() string { return filepath.Join(s.state, "edit", "saving") }
-func (s *service) editPaths() []string {
+func (s *service) editPaths() ([]string, error) {
+	if err := checkPrivateDir(filepath.Dir(s.editPath())); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, errors.New("cannot safely inspect the plaintext edit directory")
+	}
 	var paths []string
 	for _, path := range []string{s.editPath(), s.pendingEditPath()} {
-		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Lstat(path); err == nil {
 			paths = append(paths, path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return paths, errors.New("cannot determine whether plaintext edits exist")
 		}
 	}
-	return paths
+	return paths, nil
 }
 func (s *service) status() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked()
-	paths := s.editPaths()
+	paths, editErr := s.editPaths()
 	edit := len(paths) != 0
-	result := map[string]any{"unlocked": s.cache != nil, "edit_open": edit, "fully_locked": s.cache == nil && !edit, "kubeconfig": filepath.Join(s.state, "current", "kubeconfig")}
+	result := map[string]any{"unlocked": s.cache != nil, "edit_open": edit, "fully_locked": s.cache == nil && !edit && editErr == nil, "kubeconfig": filepath.Join(s.state, "current", "kubeconfig")}
+	if editErr != nil {
+		result["problems"] = []string{editErr.Error()}
+	}
+	if time.Now().Before(s.retryAfter) {
+		result["automatic_unlock_paused_until"] = s.retryAfter.UTC().Format(time.RFC3339Nano)
+	}
 	if edit {
 		result["edit_path"] = paths[0]
 		result["edit_paths"] = paths
@@ -183,10 +197,11 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		if err = s.cachePayload(epoch, p, snap.ID); err != nil {
 			return nil, err
 		}
-		s.retryAfter = time.Time{}
 		return s.status(), nil
 	case "config-unlock":
-		if len(s.editPaths()) != 0 {
+		if paths, err := s.editPaths(); err != nil {
+			return nil, err
+		} else if len(paths) != 0 {
 			return nil, errors.New("an edit already exists; save or discard it first")
 		}
 		s.edit = nil
@@ -212,6 +227,8 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		}
 		s.edit = authenticatedEdit(p, snap)
 		return s.status(), nil
+	case "config-repair":
+		return s.repair(ctx, r.Path)
 	case "config-lock":
 		return s.saveEdit(ctx, r.Accept)
 	case "config-discard":
@@ -220,7 +237,11 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		if _, err := os.Lstat(filepath.Dir(s.editPath())); errors.Is(err, os.ErrNotExist) {
 			return s.status(), nil
 		}
-		for _, path := range s.editPaths() {
+		paths, err := s.editPaths()
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range paths {
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return nil, errors.New("cannot delete plaintext edit")
 			}
@@ -266,7 +287,7 @@ func (s *service) open(ctx context.Context, title string) (*payload, *snapshot, 
 	defer func() { c.finish(ok) }()
 	p, err := decryptPayload(snap.Cipher, browserKey{c, snap.Meta.Identity})
 	if err != nil {
-		return nil, snap, err
+		return nil, snap, c.failure(err)
 	}
 	if p.Meta != snap.Meta || !equalProjection(p.Projection, snap.Projection) {
 		return nil, snap, errors.New("vault metadata or generated connection settings changed")
@@ -391,6 +412,9 @@ func (s *service) editSaved(changed bool) (map[string]any, error) {
 }
 
 func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
+	if err := checkPrivateDir(filepath.Dir(s.editPath())); err != nil {
+		return nil, err
+	}
 	if _, err := os.Lstat(s.pendingEditPath()); !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("an interrupted save remains; review edit_paths in status and preserve or discard the files before retrying")
 	}
@@ -480,6 +504,7 @@ func (s *service) cachePayload(epoch uint64, p *payload, generation string) erro
 	if s.epoch != epoch || s.closed {
 		return errors.New("unlock cancelled")
 	}
+	s.retryAfter = time.Time{}
 	now := time.Now()
 	s.cache = &session{Generation: generation, Meta: p.Meta, Records: p.Records, Projection: p.Projection, Deadline: now.Add(s.ttl), WallDeadline: now.Round(0).Add(s.ttl)}
 	return nil
@@ -536,22 +561,41 @@ func (s *service) checkCachedGeneration(cached *session) error {
 	return cipher.Close()
 }
 
+func retryDeadline(now time.Time, err error) time.Time {
+	if errors.Is(err, errRequestDeclined) {
+		return now.Add(10 * time.Minute)
+	}
+	return now.Add(30 * time.Second)
+}
+
+func automaticPause(now, until time.Time) error {
+	if !now.Before(until) {
+		return nil
+	}
+	return fmt.Errorf("automatic unlock paused until %s; run kubeconfig-vault unlock to retry now", until.UTC().Format(time.RFC3339Nano))
+}
+
 func (s *service) credential(ctx context.Context, epoch uint64, r request) (any, error) {
 	if r.Cluster == nil || !validID.MatchString(r.ID) || r.Cluster.CAFile != "" || r.Cluster.Insecure {
 		return nil, errors.New("exec request needs an approved cluster and credential ID")
 	}
 	s.mu.Lock()
 	s.expireLocked()
-	cached := s.cache
+	cached, retryAfter := s.cache, s.retryAfter
 	s.mu.Unlock()
 	if cached == nil {
-		if time.Now().Before(s.retryAfter) {
-			return nil, errors.New("browser unlock cooldown; run unlock explicitly to retry now")
+		if err := automaticPause(time.Now(), retryAfter); err != nil {
+			return nil, err
 		}
 		p, current, err := s.open(ctx, "A Kubernetes client requested vault access")
 		if err != nil {
 			if current != nil && ctx.Err() == nil {
-				s.retryAfter = time.Now().Add(30 * time.Second)
+				now := time.Now()
+				deadline := retryDeadline(now, err)
+				s.mu.Lock()
+				s.retryAfter = deadline
+				s.mu.Unlock()
+				return nil, fmt.Errorf("%w: %v", err, automaticPause(now, deadline))
 			}
 			return nil, err
 		}

@@ -73,10 +73,13 @@ watch, port-forward or shell. Screen-lock
 hooks are not implemented. Go/JavaScript cannot promise complete memory erasure.
 Core dumps are disabled; swap and hibernation remain OS concerns.
 
-After a failed automatic unlock, a 30-second cooldown prevents queued clients
-from repeatedly opening browser tabs. Explicit `unlock` can retry immediately.
+Declining an automatic unlock on the vault page pauses new automatic prompts
+for ten minutes. Device errors, browser dismissal and authentication timeouts
+after vault selection use 30 seconds. Queued clients share the deadline.
+Explicit `unlock` can retry immediately. A successful unlock or helper restart
+clears the in-memory deadline.
 The page labels an automatic client request and offers **Decline request** before
-any security-key interaction. Declining sends a failure for the current step.
+any security-key interaction. The page reports an explicit decline separately from a failed WebAuthn call.
 The helper knows a Kubernetes client requested credentials but cannot identify
 the application that started the request.
 
