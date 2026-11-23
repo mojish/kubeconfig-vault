@@ -4,11 +4,9 @@
 
 `--version` prints the packaged release version. Source builds report `dev`.
 
-The installed command is `kubeconfig-vault`. The installer also provides
-`kube-unlock-age` for existing kubeconfigs. On the next verified edit, the helper
-updates the embedded command when the old path is the installer-created alias.
+The installed command is `kubeconfig-vault`.
 
-State directories remain `~/.local/share/kube-unlock-age` on Linux and
+The default state directories are `~/.local/share/kube-unlock-age` on Linux and
 `~/Library/Application Support/kube-unlock-age` on macOS. `--state-dir` selects a
 private directory; Unix socket limits also constrain its path length.
 `--session-seconds` accepts 1–3600, default 3600, and affects only a new daemon.
@@ -82,11 +80,7 @@ Setup validates a selected source before requesting security-key approval,
 including when attaching a different file to an existing vault.
 The generated kubeconfig contains the proxy address in readable form. Use an
 HTTP, HTTPS, or SOCKS5 `proxy-url` without embedded credentials, a query, or a
-fragment. If an older vault contains a proxy query or fragment, use
-`config unlock`, correct the proxy in the edit file, and close the editor before
-`config lock --accept-connection-changes`. Review older generated files and
-any copies if the old URL contained a secret. With only an old encrypted backup,
-use `recover --out NEW-FILE`, correct the private export, then run `setup NEW-FILE`.
+fragment.
 Standalone import rejects symlink sources. Setup preserves client symlinks by managing their resolved regular target. Both reject symlink CA and recovery files. Recovery identities
 must be owned by this user, mode 0600, and not hard-linked. Outputs never overwrite.
 CA data accepts certificate PEM blocks only, without PEM headers or unrelated
@@ -138,11 +132,8 @@ After an interruption that leaves only the receipt, repeat `config link` to
 attach the client or `config unlink` to finish detaching it. A replacement
 client file or conflicting backup is preserved.
 
-Older releases created some symlinks without a receipt. If both the receipt
-and original backup are missing, Vault keeps the symlink because it cannot
-tell whether a backup was lost. Locate the original backup first. If you
-independently know that the client path was originally empty, you can remove
-just the managed symlink and run `config link` again to record that fact.
+If both the receipt and original backup are missing, Vault keeps the symlink.
+Locate the original backup before trying to detach the client.
 
 For multiple files in `KUBECONFIG`, pass one path to setup. Use
 `config unlink --kubeconfig FILE` for a file selected explicitly. With a single
@@ -151,10 +142,7 @@ Referenced CA paths are resolved against the selected client path. Existing syml
 are preserved and the final target becomes the managed link. Changing that target
 affects every other reference to it. Close other editors before setup or unlink.
 
-An old regular plaintext backup is migrated only after the encrypted replacement
-has been verified. For a legacy symlink backup, use the old rollback with
-`config unlink` first, then run setup. An old backup with unsupported contents
-is preserved for manual handling. When setup reports interruption, leave the
+When setup reports interruption, leave the
 original and encrypted backup in place and rerun. A killed client or helper
 can leave a client-go `.lock` file. After confirming that every Vault or
 kubectl config writer using that file has exited, remove its stale lock and retry.

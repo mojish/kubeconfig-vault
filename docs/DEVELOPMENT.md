@@ -18,7 +18,7 @@ For a source build or when no release is published, clone this repo and run
 You need Go 1.26.11 or newer and Node.js 22.12 or newer. With an older bootstrap
 Go that supports automatic toolchains, `GOTOOLCHAIN=auto ./install.sh --source`
 allows Go to download the required version. A final argument selects a custom
-install directory. Use the same directory for upgrades.
+install directory.
 
 The macOS binaries are experimental and have not been notarized by Apple.
 If [Gatekeeper](https://support.apple.com/en-us/102445) blocks a download, build
@@ -59,9 +59,6 @@ The browser suite also rewrites the linked file with real kubectl before cold
 and cached requests, saves an edit, and checks the selected context and namespace
 afterward. The installer test uses a disposable download fixture to verify
 the exact release URLs and that a checksum failure preserves the installed binary.
-Linux CI builds the pinned v0.3.0 commit and enrolls with that binary before
-testing the upgrade. Set `KUBE_UNLOCK_TEST_PREVIOUS_BINARY` to a trusted v0.3.0
-executable to repeat this locally. The test upgrades only its disposable vault.
 
 The Go suite covers session expiry, Unix peer identity, authenticated storage,
 file handling, editing failures, and HTTP access controls. The Linux
@@ -120,11 +117,6 @@ For offline recovery, follow the [README](../README.md#back-up-and-recover). If 
 replace a lost YubiKey, import the recovered plaintext into a new state directory
 with the replacement key and verify it before switching clients. Select the new
 state directory with `--state-dir PATH` before the `import` command.
-
-For an upgrade, stop the helper with `kubeconfig-vault stop`
-(`kube-unlock-age stop` on v0.2.0 or earlier) using the same
-`--state-dir` as your import if you chose a custom one. Run the installer again
-with the same destination so the generated kubeconfig keeps working.
 
 ## Prepare a release
 

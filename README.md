@@ -10,22 +10,14 @@ verified HTTPS. See [compatibility](#compatibility) for tested configurations.
 
 ## Install and set up
 
-**Upgrading an existing vault?** Run `kubeconfig-vault stop` first (use
-`kube-unlock-age stop` on v0.2.0 or earlier). Install into the same directory.
-
-Download the [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest) installer:
+Download and run the installer from the latest [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest).
 
 ```sh
-curl -fL -o install.sh https://github.com/mojish/kubeconfig-vault/releases/latest/download/install.sh &&
-  sh install.sh
+curl -fL -o install-kubeconfig-vault.sh https://github.com/mojish/kubeconfig-vault/releases/latest/download/install.sh &&
+  sh install-kubeconfig-vault.sh
 ```
 
-If your vault is already set up, run `kubeconfig-vault status`.
-Your current vault and client paths work with the new binary.
-If upgrading from v0.2.x or earlier, restart Freelens and other long-running
-Kubernetes clients to drop credentials cached under the older one-hour policy.
-
-For a new vault, close any editors writing your kubeconfig, then run:
+Close any editors writing your kubeconfig, then run the setup command.
 
 ```sh
 kubeconfig-vault setup
@@ -48,9 +40,7 @@ will use the vault.
    Clients already reading the selected file pick up the vault through that path.
 
 Setup verifies both decryption methods, saves an encrypted copy of your exact
-original, and switches the client file. Repeat setup to resume. When upgrading
-from v0.1.1, run setup to convert a regular plaintext rollback copy using your
-existing vault and key.
+original, and switches the client file. If setup is interrupted, run it again to resume.
 
 Running `kubeconfig-vault status` before enrollment reports that setup is needed.
 It can also check a stopped vault without starting the helper.
