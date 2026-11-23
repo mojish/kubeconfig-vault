@@ -47,19 +47,13 @@ async function bootstrapTarget(uri){
 
 async function startCertificateAPI(certificate, privateKey) {
   const clientKeyFile = join(root,"client.key"), clientCertFile = join(root,"client.crt");
-  const csr = join(root,"client.csr"), extensions = join(root,"client.ext");
-  const issuer = join(root,"issuer.crt"), issuerKey = join(root,"issuer.key");
-  await writeFile(extensions,[
-    "basicConstraints=critical,CA:FALSE", "keyUsage=critical,digitalSignature",
-    "extendedKeyUsage=clientAuth", "subjectKeyIdentifier=hash", "authorityKeyIdentifier=keyid,issuer",
-  ].join("\n")+"\n",{mode:0o600});
-  for (const args of [
-    ["req","-sha256","-x509","-newkey","rsa:2048","-nodes","-keyout",issuerKey,"-out",issuer,"-subj","/CN=Test Client CA","-days","1",
-      "-addext","basicConstraints=critical,CA:TRUE","-addext","keyUsage=critical,keyCertSign","-addext","subjectKeyIdentifier=hash"],
-    ["req","-sha256","-new","-newkey","rsa:2048","-nodes","-keyout",clientKeyFile,"-out",csr,"-subj","/CN=vault-client"],
-    ["x509","-sha256","-req","-in",csr,"-CA",issuer,"-CAkey",issuerKey,"-set_serial","23","-days","1","-extfile",extensions,"-out",clientCertFile],
-    ["verify","-purpose","sslclient","-CAfile",issuer,clientCertFile],
-  ]) assert.equal(spawnSync("openssl",args,{stdio:"ignore"}).status,0,`synthetic client PKI failed at openssl ${args[0]}`);
+  const issuer = join(root,"issuer.crt");
+  const generated = spawnSync("go",["run",join(cwd,"test-support","clientpki.go"),root],{
+    cwd,encoding:"utf8",timeout:90000,env:{...process.env,GO111MODULE:"off",GOTOOLCHAIN:"local"},
+  });
+  assert.equal(generated.status,0,"could not generate synthetic client TLS certificate: "+generated.stderr);
+  const verified = spawnSync("openssl",["verify","-purpose","sslclient","-CAfile",issuer,clientCertFile],{encoding:"utf8"});
+  assert.equal(verified.status,0,"synthetic issuer verification failed: "+verified.stdout+verified.stderr);
   const clientKey = await readFile(clientKeyFile), clientCert = await readFile(clientCertFile);
   const mtls = https.createServer({cert:certificate,key:privateKey,ca:await readFile(issuer),requestCert:true,rejectUnauthorized:true},(req,res)=>{
     const peer = req.socket.getPeerCertificate();

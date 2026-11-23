@@ -72,6 +72,11 @@ jobs:
         if: runner.os == 'macOS' || runner.arch == 'X64'
         with:
           node-version: '22'
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        if: runner.os == 'macOS' || runner.arch == 'X64'
+        with:
+          go-version-file: age-app/go.mod
+          cache: false
       - name: Exercise the packaged CLI with virtual USB authentication and kubectl
         if: runner.os == 'macOS' || runner.arch == 'X64'
         working-directory: age-app
