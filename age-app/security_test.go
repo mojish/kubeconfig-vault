@@ -63,7 +63,6 @@ func TestConfigBoundary(t *testing.T) {
 		"http":               strings.Replace(synthetic, "https://", "http://", 1),
 		"credentials-in-url": strings.Replace(synthetic, "https://example.invalid", "https://name:secret@example.invalid", 1),
 		"insecure":           strings.Replace(synthetic, "server: https://example.invalid", "server: https://example.invalid\n    insecure-skip-tls-verify: true", 1),
-		"preferences":        synthetic + "preferences: {secret: hidden}\n",
 		"unknown-context":    strings.Replace(synthetic, "current-context: demo", "current-context: missing", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -79,6 +78,24 @@ func TestConfigBoundary(t *testing.T) {
 	}
 	if p.Source != synthetic || p.Projection.Users[0].User.Exec.Interactive != "Never" {
 		t.Fatal("source or exec contract changed")
+	}
+}
+
+func TestLegacyPreferencesStayInEncryptedSource(t *testing.T) {
+	const marker = "synthetic-preference-extension-data"
+	source := synthetic + "preferences: {colors: true, extensions: [{name: legacy, extension: {value: " + marker + "}}]}\n"
+	p, err := prepare([]byte(source), t.TempDir(), "/synthetic/state", "/synthetic/command", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Source != source {
+		t.Fatal("import lost legacy preferences from the editable source")
+	}
+	for _, c := range []config{p.Projection, p.Portable} {
+		b, err := serializeConfig(c)
+		if err != nil || bytes.Contains(b, []byte(marker)) || bytes.Contains(b, []byte("preferences:")) {
+			t.Fatal("legacy preferences reached a generated kubeconfig")
+		}
 	}
 }
 

@@ -36,15 +36,16 @@ vault="$HOME/.local/bin/kube-unlock-age"
 
 Run the next blocks in the same terminal. In another terminal, set `$vault`
 again. Keep the binary at this path because the generated kubeconfig points to it.
+The import and link steps below require v0.1.1 or newer.
 
 ## 2. Import once and save the recovery key
 
 ```sh
-"$vault" import "$HOME/.kube/config"
+"$vault" import
 ```
 
-Use the path to your existing kubeconfig if it lives elsewhere. The command
-reads that one file and leaves it intact.
+This reads `~/.kube/config` and leaves it in place. If yours lives elsewhere,
+pass its path after `import`.
 
 1. Press Enter when the terminal offers to show your recovery key.
 2. Copy the key into a password manager you can access separately from this
@@ -58,33 +59,23 @@ scrollback and clipboard history may retain a copy. The app creates the vault
 only after verifying both ways of decrypting it. If enrollment fails before
 the vault is created, retry import and save the new key it shows.
 
-## 3. Use kubectl or Freelens
-
-Try a read you already have permission to run.
+## 3. Keep using kubectl and Freelens as usual
 
 ```sh
-vault_config=$("$vault" path kubeconfig) &&
-    kubectl --kubeconfig "$vault_config" get namespaces
+"$vault" config link && kubectl get namespaces
 ```
 
-The file from `path kubeconfig` is the one to give to clients. It contains
-connection settings and a helper command. After you unlock, the helper gives
-kubectl the token. Repeat the command to use the same session without another
-browser prompt.
+Use any read operation you already have permission to run. `config link` points
+`~/.kube/config` at a token-free file that calls the vault when a client needs a
+token. kubectl and Freelens can keep reading the same path. The first request
+opens the browser and later requests reuse the unlocked session.
 
-For ordinary `kubectl` commands in this terminal, set `KUBECONFIG` once:
+The original is saved as `~/.kube/config.before-kubeconfig-vault`. Run
+`"$vault" config unlink` to restore it. **The backup still grants access.**
+After verifying vault access and recovery, protect it separately.
 
-```sh
-vault_config=$("$vault" path kubeconfig) &&
-    export KUBECONFIG="$vault_config" && kubectl get namespaces
-```
-
-This affects the current terminal and its child processes. To switch back,
-use a fresh terminal with your normal environment. For **Freelens**, run
-`"$vault" path kubeconfig`, copy the printed file path, and add that file to
-Freelens as a synchronized kubeconfig so it can see future saves. The bundled
-proxy and Freelens 2.1.0 GUI passed on Linux with a dummy cluster and isolated
-profile. Reconnect to the cluster after `config lock` to pick up saved changes.
+If `KUBECONFIG` or a Freelens profile already points somewhere else, that client
+will keep using its configured file. See [custom client paths](docs/INTERFACE.md#client-kubeconfig-link).
 
 ## Edit or lock the vault
 
@@ -96,6 +87,8 @@ Replace `nano` with your preferred editor. Save and close the editor before
 running `"$vault" config lock` to validate, encrypt, and verify the change.
 The editable copy is plaintext, so disable editor backups and autosave copies.
 Keep client settings pointed at the generated config from step 3.
+Reconnect in Freelens to pick up saved changes if your current connection still
+has the previous token cached.
 
 Use `"$vault" lock` to clear the session. It preserves any unfinished edit.
 See [interrupted edits](docs/DEVELOPMENT.md#interrupted-edits) for how to resume

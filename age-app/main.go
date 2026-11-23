@@ -234,7 +234,7 @@ Usage: kube-unlock-age [global options] COMMAND
 
 recovery-key new FILE                  Create a new private offline recovery key
 recovery-key public FILE               Print only its public recipient
-import SOURCE                         Show a recovery key, then enroll and verify a vault
+import [SOURCE]                       Enroll a vault from ~/.kube/config or a selected file
 import SOURCE --recovery-key FILE      Enroll and verify a vault using an existing recovery key
 path kubeconfig|edit|vault              Print the path to an existing file
 credential ID                         Kubernetes exec entry point (not for humans)
@@ -242,6 +242,8 @@ unlock | lock | status | stop          Manage the one-hour credential session
 config unlock                         Create a plaintext file for normal editing
 config lock [--accept-connection-changes]  Validate, encrypt, verify, and delete edit
 config discard                        Delete the unsaved plaintext edit
+config link [--kubeconfig FILE]       Point ~/.kube/config at the vault and preserve the original
+config unlink [--kubeconfig FILE]     Restore the original kubeconfig
 export NEW-FILE                        Fresh authentication; portable plaintext export
 recover VAULT.age --out NEW-FILE       Paste your recovery key at a hidden prompt
 recover VAULT.age --key FILE --out NEW-FILE  Recover using a private key file
@@ -330,6 +332,9 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	if a[0] == "path" {
 		return printPath(*state, a[1:])
 	}
+	if len(a) >= 2 && a[0] == "config" && (a[1] == "link" || a[1] == "unlink") {
+		return configureKubeconfigLink(*state, a[1], a[2:])
+	}
 	if err = privateDir(*state); err != nil {
 		return err
 	}
@@ -351,10 +356,14 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 			return errors.New("unexpected command argument")
 		}
 	case "import":
-		if len(a) != 2 && (len(a) != 4 || a[2] != "--recovery-key") {
-			return errors.New("usage: import SOURCE [--recovery-key FILE]")
+		switch {
+		case len(a) == 1:
+			r.Path, err = defaultKubeconfigPath()
+		case len(a) == 2 || len(a) == 4 && a[2] == "--recovery-key":
+			r.Path, err = absolute(a[1])
+		default:
+			return errors.New("usage: import [SOURCE] or import SOURCE --recovery-key FILE")
 		}
-		r.Path, err = absolute(a[1])
 		if err != nil {
 			return err
 		}
@@ -385,7 +394,7 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		}
 	case "config":
 		if len(a) < 2 || len(a) > 3 {
-			return errors.New("usage: config unlock|lock|discard")
+			return errors.New("usage: config unlock|lock|discard|link|unlink")
 		}
 		r.Op = "config-" + a[1]
 		if a[1] != "unlock" && a[1] != "lock" && a[1] != "discard" {
@@ -432,6 +441,9 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		return err
 	}
 	fmt.Fprintln(os.Stdout, strings.TrimSpace(string(result)))
+	if r.Op == "import" && len(r.RecoveryIdentity) != 0 {
+		fmt.Fprintln(os.Stderr, "Vault created. Use config link to connect clients that use the default kubeconfig.")
+	}
 	return nil
 }
 

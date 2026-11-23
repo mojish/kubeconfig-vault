@@ -113,9 +113,10 @@ recovery files, exports, editor artifacts, snapshots, and unsaved edits require
 separate protection. Deletion is not secure erasure on SSDs/snapshot filesystems.
 
 The input contract supports inline bearer tokens, verified HTTPS, public
-CA data/files, and standard named contexts. Token files, client certificates,
-exec/auth-provider sources, nonempty preferences, extensions, and unknown fields
-are rejected. No token is rotated. Client-go/Freelens can retain delivered tokens
+CA data/files, and standard named contexts. Legacy preferences stay in the
+encrypted source. Token files, client certificates, exec/auth-provider sources,
+extensions outside preferences, and unknown fields are rejected. No token is
+rotated. Client-go/Freelens can retain delivered tokens
 and existing streams after lock. Linux tests cover real kubectl, the Freelens
 Kubernetes proxy, and the Freelens 2.1.0 GUI with synthetic data. CI runs native
 tests on Apple Silicon and Intel macOS. Desktop browser and physical-key testing
@@ -128,3 +129,9 @@ CA inputs must contain only valid public certificate PEM blocks and surrounding
 whitespace. Unexpected text, PEM headers, private keys, and malformed blocks are
 rejected. The public projection embeds re-encoded certificates only. This avoids
 copying unrelated contents of a mixed PEM file into the unencrypted projection.
+
+`config link` backs up the existing client entry and atomically points its path
+at the generated kubeconfig. It uses the client-go lock file convention to
+avoid races with `kubectl config` writes. Vault saves replace the `current`
+generation link without changing the client path. The original backup may still
+contain plaintext credentials and needs separate protection.

@@ -19,7 +19,7 @@ and follow their redirect to localhost. No launch capability appears in argument
 | --- | --- |
 | `recovery-key new FILE` | Exclusive private hybrid age identity file; no secret stdout |
 | `recovery-key public FILE` | Public recipient only |
-| `import SOURCE` | Display a recovery key in the terminal, confirm backup, then enroll and verify the vault |
+| `import [SOURCE]` | Import from `~/.kube/config` by default, confirm recovery backup, then enroll and verify the vault |
 | `import SOURCE --recovery-key FILE` | Enroll and verify the vault using an existing private key file |
 | `path kubeconfig` / `path edit` / `path vault` | Print only the absolute path to the selected file |
 | `status` | JSON session state, expiry, primary `edit_path`, all `edit_paths`, and `fully_locked` |
@@ -28,6 +28,8 @@ and follow their redirect to localhost. No launch capability appears in argument
 | `config unlock` | Fresh authentication and a plaintext edit file |
 | `config lock [--accept-connection-changes]` | Validate, encrypt, verify, commit, delete edit |
 | `config discard` | Delete normal and interrupted-save edits and clear cache |
+| `config link [--kubeconfig FILE]` | Link the default config or a selected file to the generated client config |
+| `config unlink [--kubeconfig FILE]` | Restore the backed-up entry, or remove the managed link if it had no original |
 | `export NEW-FILE` | Fresh authentication and portable plaintext export |
 | `recover VAULT.age --out NEW-FILE` | Offline recovery. Paste the key at a hidden terminal prompt. |
 | `recover VAULT.age --key FILE --out NEW-FILE` | Offline recovery using an existing private key file |
@@ -44,9 +46,11 @@ file is absent. An interrupted edit is listed by `status`, not selected by `path
 
 Import takes one single-document v1 Config, up to 4 MiB, without `KUBECONFIG`
 merging. Inline bearer tokens, verified HTTPS, supported public cluster fields,
-and named contexts are accepted. Token files, client certificates, exec/auth-provider,
-nonempty preferences, extensions, and unknown fields fail without executing any
-imported command. Symlink source/CA/recovery files are rejected. Recovery identities
+and named contexts are accepted. Legacy `preferences` are kept in the encrypted
+editable source and omitted from generated client files and recovery exports.
+Token files, client certificates, exec/auth-provider, extensions outside
+`preferences`, and unknown fields fail without executing any imported command.
+Symlink source/CA/recovery files are rejected. Recovery identities
 must be owned by this user, mode 0600, and not hard-linked. Outputs never overwrite.
 CA data accepts certificate PEM blocks only, without PEM headers or unrelated
 contents. Both generated and portable configurations must fit the 4 MiB reader
@@ -69,3 +73,22 @@ The current vault metadata format is version 1.
 Encrypted generations are retained. Restore, repair, multi-key enrollment,
 in-place key rotation, and migration subcommands are not implemented. See
 [editing and limitations](ARCHITECTURE.md#editing-and-limitations).
+
+## Client kubeconfig link
+
+`config link` changes `~/.kube/config` only when asked and only after an import.
+It targets `STATE/current/kubeconfig`, which stays at the same path across edits.
+kubectl still honors `KUBECONFIG` and `--kubeconfig`. If a client already
+references another file, use `config link --kubeconfig FILE` and the same flag
+with `config unlink`. A client using an imported copy needs a file reference
+for the link to affect it.
+
+The link keeps the prior entry beside it at `FILE.before-kubeconfig-vault`. A
+regular file is copied with mode 0600. An existing symlink is preserved with
+its destination unchanged, including relative links. Linking refuses to replace
+an existing backup. Unlink only changes a symlink that points to this vault.
+Use the same `--state-dir` for link and unlink if you selected a custom vault.
+
+The original entry still exposes the old configuration until you protect it.
+After you verify access and recovery, you can move the backup to protected
+storage. Once it is gone locally, `config unlink` can only remove the link.

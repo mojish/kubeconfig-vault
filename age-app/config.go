@@ -102,9 +102,6 @@ func parseConfig(data []byte) (config, error) {
 	if c.APIVersion != "v1" || c.Kind != "Config" {
 		return c, errors.New("expected a Kubernetes v1 Config")
 	}
-	if len(c.Preferences) != 0 {
-		return c, errors.New("nonempty preferences are not supported")
-	}
 	return c, nil
 }
 func binding(c cluster) string {
@@ -169,6 +166,9 @@ func prepare(source []byte, base, state, executable string, previous *payload) (
 	if err != nil {
 		return nil, err
 	}
+	// Legacy preferences belong in Source only. They may carry opaque
+	// extension data that must not reach a generated client file.
+	c.Preferences = nil
 	if len(c.Clusters) == 0 || len(c.Users) == 0 || len(c.Contexts) == 0 {
 		return nil, errors.New("clusters, token users, and contexts are required")
 	}

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
 import https from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,13 +55,17 @@ try {
     res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({gitVersion:"v1.32.0"}));
   });
   await new Promise((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
-  const sourceObject={apiVersion:"v1",kind:"Config",clusters:[{name:"synthetic",cluster:{server:`https://127.0.0.1:${server.address().port}`,"certificate-authority-data":certificate.toString("base64")}}],users:[{name:"synthetic",user:{token:tokenA}}],contexts:[{name:"synthetic",context:{cluster:"synthetic",user:"synthetic"}}],"current-context":"synthetic"};
+  const sourceObject={apiVersion:"v1",kind:"Config",clusters:[{name:"synthetic",cluster:{server:`https://127.0.0.1:${server.address().port}`,"certificate-authority-data":certificate.toString("base64")}}],users:[{name:"synthetic",user:{token:tokenA}}],contexts:[{name:"synthetic",context:{cluster:"synthetic",user:"synthetic"}}],"current-context":"synthetic",preferences:{colors:true}};
   const original=JSON.stringify(sourceObject,null,2);await writeFile(source,original,{mode:0o600});
   const missingConfig = await launch(["path", "kubeconfig"]).promise;
   assert.equal(missingConfig.code, 1);
   assert.equal(missingConfig.stdout, "");
   assert.match(missingConfig.stderr, /run import first/);
   await assert.rejects(stat(state), { code: "ENOENT" });
+  const prematureLink = await launch(["config", "link", "--kubeconfig", source]).promise;
+  assert.equal(prematureLink.code, 1);
+  assert.equal(await readFile(source, "utf8"), original);
+  await assert.rejects(stat(source + ".before-kubeconfig-vault"), { code: "ENOENT" });
   const daemon=spawn(executable,["--state-dir",state,"--browser",launcher,"serve"],{stdio:["ignore","ignore","pipe"]});children.push(daemon);let daemonLog="";daemon.stderr.on("data",b=>daemonLog+=b);
   await waitFor(async()=>{try{return(await stat(join(state,"session.sock"))).isSocket()}catch{return false}},"private daemon socket");
   const nonInteractive = await launch(["import", source], { detached: true }).promise;
@@ -112,11 +116,16 @@ try {
   const encryptedVault = (await cli("path", "vault")).trimEnd();
   const initialGeneration=await readFile(encryptedVault);
   assert.ok(initialGeneration.subarray(0,22).toString().startsWith("age-encryption.org/v1"));
-  assert.ok(!(await readFile(generatedConfig,"utf8")).includes(tokenA));
+  const projection = await readFile(generatedConfig, "utf8");
+  assert.ok(!projection.includes(tokenA) && !projection.includes("preferences:"));
   console.log("PASS: single-command import confirms recovery backup before opening the browser, verifies both recipients, and preserves the source.");
 
+  await cli("config", "link", "--kubeconfig", source);
+  assert.equal(await readlink(source), generatedConfig);
+  assert.equal(await readFile(source + ".before-kubeconfig-vault", "utf8"), original);
+
   const kube=()=>{
-    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--kubeconfig",generatedConfig,"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:generatedConfig},stdio:["ignore","pipe","pipe"]});
+    const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:source},stdio:["ignore","pipe","pipe"]});
     children.push(p);let stdout="",stderr="";const result={done:false};p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);result.promise=new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;Object.assign(result,{code,stdout,stderr});resolve(result)})});return result;
   };
   const before=(await urls()).length,first=kube(),second=kube();
@@ -130,7 +139,7 @@ try {
   // Exercise the installed proxy only against the explicit synthetic config.
   const proxyPath=process.env.KUBE_UNLOCK_TEST_FREELENS_PROXY||"/opt/Freelens/resources/x64/freelens-k8s-proxy";
   if(await stat(proxyPath).catch(()=>false)){
-    const proxy=spawn(proxyPath,["proxy","--kubeconfig",join(state,"current","kubeconfig")],{env:{...process.env,KUBECONFIG:join(state,"current","kubeconfig"),FREELENS_PROXY_CONTEXT:"synthetic",FREELENS_PROXY_API_PREFIX:"/synthetic-test",FREELENS_PROXY_KEY:privateKey.toString(),FREELENS_PROXY_CERT:certificate.toString()},stdio:["ignore","pipe","pipe"]});children.push(proxy);let output="";proxy.stdout.on("data",b=>output+=b);proxy.stderr.on("data",b=>output+=b);
+    const proxy=spawn(proxyPath,["proxy","--kubeconfig",source],{env:{...process.env,KUBECONFIG:source,FREELENS_PROXY_CONTEXT:"synthetic",FREELENS_PROXY_API_PREFIX:"/synthetic-test",FREELENS_PROXY_KEY:privateKey.toString(),FREELENS_PROXY_CERT:certificate.toString()},stdio:["ignore","pipe","pipe"]});children.push(proxy);let output="";proxy.stdout.on("data",b=>output+=b);proxy.stderr.on("data",b=>output+=b);
     const port=await waitFor(()=>output.match(/127\.0\.0\.1:(\d+)/)?.[1],"synthetic Freelens proxy");
     await new Promise((resolve,reject)=>{https.get({hostname:"127.0.0.1",port,path:"/synthetic-test/version",ca:certificate,timeout:10000},res=>{res.resume();res.on("end",()=>res.statusCode===200?resolve():reject(new Error("Synthetic proxy request failed")))}).on("error",reject).on("timeout",function(){this.destroy()})});
     assert.ok(!output.includes(tokenA));proxy.kill();await once(proxy,"exit");
@@ -200,6 +209,11 @@ try {
   assert.ok(!daemonLog.includes(tokenA)&&!daemonLog.includes(tokenB)&&!daemonLog.includes(recoveryText)&&!daemonLog.includes("DATA RACE"));
   for(const name of await readdir(join(state,"generations"))){for(const file of ["vault.age","metadata.json","kubeconfig"]){const data=await readFile(join(state,"generations",name,file));assert.ok(!data.includes(tokenA)&&!data.includes(tokenB)&&!data.includes(recoveryText))}}
   await cli("stop");await once(short,"exit");
+  await cli("config", "unlink", "--kubeconfig", source);
+  assert.equal(await readFile(source, "utf8"), original);
+  assert.ok(!(await stat(source + ".before-kubeconfig-vault").catch(() => false)));
+  await assert.rejects(stat(join(state, "session.sock")), { code: "ENOENT" });
+  console.log("PASS: existing client path works across vault saves, and unlink restores the original without starting a daemon.");
   console.log("PASS: local assets only; no Kubernetes token or private recovery key in browser HTTP or persistent generations.");
 } finally {
   clearTimeout(timeout);
