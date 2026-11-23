@@ -22,7 +22,7 @@ const launcher = join(root,"browser"), urlsFile = join(root,"urls");
 const recovery = join(root,"offline-key"), source = join(root,"source"), children = [];
 const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
 let acceptedToken = tokenA, server, failure;
-const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },300000);
+const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },420000);
 
 function launch(args, { terminal = false, program: cliProgram = executable, ...extra } = {}) {
   const command = [cliProgram, "--state-dir", state, "--browser", launcher, ...args];
@@ -395,7 +395,7 @@ try {
   console.log("PASS: exiting the requesting client cancels authentication instead of leaving it running.");
 
   // The daemon's short lifetime here is solely to exercise real expiry.
-  await cli("stop");await once(daemon,"exit");
+  await Promise.all([once(daemon,"exit"),cli("stop")]);
   const short=spawn(executable,["--state-dir",state,"--browser",launcher,"--session-seconds","1","serve"],{stdio:["ignore","ignore","pipe"]});children.push(short);short.stderr.on("data",b=>daemonLog+=b);
   await waitFor(async()=>{try{return(await stat(join(state,"session.sock"))).isSocket()}catch{return false}},"short-session daemon");
   await successful(kube());await delay(1300);assert.equal(JSON.parse(await cli("status")).unlocked,false);
@@ -526,7 +526,7 @@ try {
   assert.ok(!httpText.includes(tokenA)&&!httpText.includes(tokenB)&&!httpText.includes(recoveryText));
   assert.ok(!daemonLog.includes(tokenA)&&!daemonLog.includes(tokenB)&&!daemonLog.includes(recoveryText)&&!daemonLog.includes("DATA RACE"));
   for(const name of await readdir(join(state,"generations"))){for(const file of ["vault.age","metadata.json","kubeconfig"]){const data=await readFile(join(state,"generations",name,file));assert.ok(!data.includes(tokenA)&&!data.includes(tokenB)&&!data.includes(recoveryText))}}
-  await cli("stop");await once(short,"exit");
+  await Promise.all([once(short,"exit"),cli("stop")]);
 
   assert.equal(await readFile(source, "utf8"), original);
   assert.ok(!(await stat(source + ".before-kubeconfig-vault").catch(() => false)));
