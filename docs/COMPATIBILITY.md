@@ -13,6 +13,8 @@ Evidence for the baseline comes from the [v0.4.1 release run](https://github.com
 
 On November 24, 2026, the v0.4.1 source build also ran with a virtual USB authenticator on Linux x86-64. Chrome 158 and kubectl v1.36.6 established one session. Freelens 2.1.0 displayed the authenticated `vault-test` namespace with the same expiration and no second approval. A separate run checked the proxy's first refresh after lock. The [captioned walkthrough and transcript](DEMO.md) show both observations.
 
+The v0.4.2 Linux x86-64 candidate was also tested after installation from its archive. Real kubectl authenticated with both credential types, the Freelens proxy requested fresh approval after its cached credential deadline, and the recovered certificate authenticated to the mutual-TLS endpoint. The desktop recording above uses the v0.4.1 build.
+
 ## Most valuable next trials
 
 | Trial | How to do it with disposable data | What counts as a pass |
