@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"path/filepath"
@@ -109,7 +110,7 @@ func parseConfig(data []byte) (config, error) {
 	d := yaml.NewDecoder(bytes.NewReader(data))
 	d.KnownFields(true)
 	if err := d.Decode(&c); err != nil {
-		return c, errors.New("invalid or unsupported kubeconfig YAML")
+		return c, configDecodeError(err)
 	}
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF {
@@ -119,6 +120,28 @@ func parseConfig(data []byte) (config, error) {
 		return c, errors.New("expected a Kubernetes v1 Config")
 	}
 	return c, nil
+}
+
+func configDecodeError(err error) error {
+	if errors.Is(err, errExecEnv) {
+		return errExecEnv
+	}
+	// The YAML decoder includes input values in some errors. Only report
+	// field names from the allowlist, including when the input is malformed.
+	var fields *yaml.TypeError
+	if errors.As(err, &fields) {
+		for _, detail := range fields.Errors {
+			if strings.HasSuffix(detail, " not found in type main.execConfig") {
+				return errors.New("unsupported users[].user.exec configuration; setup requires inline bearer tokens")
+			}
+			for _, field := range []string{"tokenFile", "auth-provider", "client-certificate", "client-certificate-data", "client-key", "client-key-data", "username", "password"} {
+				if strings.HasSuffix(detail, ": field "+field+" not found in type main.auth") {
+					return fmt.Errorf("users[].user.%s is unsupported; select a kubeconfig with inline bearer tokens", field)
+				}
+			}
+		}
+	}
+	return errors.New("invalid or unsupported kubeconfig YAML")
 }
 func binding(c cluster) string {
 	c.CAFile = ""
@@ -189,6 +212,24 @@ func prepare(source []byte, base, state, executable string, previous *payload) (
 	if err != nil {
 		return nil, err
 	}
+	if err := validateProjectionProxies(c); err != nil {
+		return nil, err
+	}
+	return prepareParsed(c, source, base, state, executable, previous)
+}
+
+// A generated client file stores proxy-url in readable form. Older encrypted
+// backups may contain a query or fragment and must still support private export.
+func validateProjectionProxies(c config) error {
+	for _, n := range c.Clusters {
+		if strings.ContainsAny(n.Cluster.Proxy, "?#") {
+			return errors.New("clusters[].cluster.proxy-url is copied into the client file; remove the query or fragment before setup or save")
+		}
+	}
+	return nil
+}
+
+func prepareParsed(c config, source []byte, base, state, executable string, previous *payload) (*payload, error) {
 	// Legacy preferences belong in Source only. They may carry opaque
 	// extension data that must not reach a generated client file.
 	c.Preferences = nil
@@ -213,7 +254,7 @@ func prepare(source []byte, base, state, executable string, previous *payload) (
 		if v.Proxy != "" {
 			u, e = url.Parse(v.Proxy)
 			if e != nil || u.User != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "socks5") {
-				return nil, errors.New("invalid or credential-bearing proxy URL")
+				return nil, errors.New("clusters[].cluster.proxy-url must be an HTTP, HTTPS, or SOCKS5 URL without user credentials")
 			}
 		}
 		if v.CAFile != "" {
@@ -251,7 +292,10 @@ func prepare(source []byte, base, state, executable string, previous *payload) (
 			return nil, errors.New("duplicate or empty user name")
 		}
 		users[n.Name] = true
-		if n.User.Exec != nil || n.User.Token == "" || len(n.User.Token) > 65536 || strings.ContainsAny(n.User.Token, "\r\n") {
+		if n.User.Exec != nil {
+			return nil, errors.New("users[].user.exec is unsupported as an import source; select a kubeconfig with inline bearer tokens")
+		}
+		if n.User.Token == "" || len(n.User.Token) > 65536 || strings.ContainsAny(n.User.Token, "\r\n") {
 			return nil, errors.New("only nonempty inline bearer-token users are supported")
 		}
 		id := randomID()

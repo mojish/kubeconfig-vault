@@ -62,6 +62,16 @@ and named contexts are accepted. Legacy `preferences` are kept in the encrypted
 editable source and omitted from generated client files and recovery exports.
 Token files, client certificates, exec/auth-provider, extensions outside
 `preferences`, and unknown fields fail without executing any imported command.
+For these authentication methods select a file with inline bearer tokens.
+Setup validates a selected source before requesting security-key approval,
+including when attaching a different file to an existing vault.
+The generated kubeconfig contains the proxy address in readable form. Use an
+HTTP, HTTPS, or SOCKS5 `proxy-url` without embedded credentials, a query, or a
+fragment. If an older vault contains a proxy query or fragment, use
+`config unlock`, correct the proxy in the edit file, and close the editor before
+`config lock --accept-connection-changes`. Review older generated files and
+any copies if the old URL contained a secret. With only an old encrypted backup,
+use `recover --out NEW-FILE`, correct the private export, then run `setup NEW-FILE`.
 Standalone import rejects symlink sources. Setup preserves client symlinks by managing their resolved regular target. Both reject symlink CA and recovery files. Recovery identities
 must be owned by this user, mode 0600, and not hard-linked. Outputs never overwrite.
 CA data accepts certificate PEM blocks only, without PEM headers or unrelated

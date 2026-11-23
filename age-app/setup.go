@@ -216,13 +216,17 @@ func (s *service) setup(ctx context.Context, r request) (any, error) {
 		return nil, err
 	}
 	defer clear(data)
+	// Reject unsupported files before asking for approval, including when
+	// attaching another file to an existing vault.
+	candidate, err := prepare(data, filepath.Dir(r.Path), s.state, s.executable, nil)
+	if err != nil {
+		return nil, err
+	}
 	var p *payload
 	var cipher []byte
 	if id == "" {
-		p, err = prepare(data, filepath.Dir(r.Path), s.state, s.executable, nil)
-		if err == nil {
-			cipher, err = s.enroll(ctx, r, p)
-		}
+		p = candidate
+		cipher, err = s.enroll(ctx, r, p)
 	} else {
 		var snap *snapshot
 		p, snap, err = s.open(ctx, "Verify your vault before connecting this kubeconfig")
@@ -233,6 +237,7 @@ func (s *service) setup(ctx context.Context, r request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Resolve CA inputs again after authentication, using the enrolled IDs.
 	original, err := prepare(data, filepath.Dir(r.Path), s.state, s.executable, p)
 	if err != nil {
 		return nil, err

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -181,5 +182,60 @@ func TestBackupIndependentOfGeneratedConfig(t *testing.T) {
 	wg.Wait()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProxyPrivacyAndLegacyRecovery(t *testing.T) {
+	p, key := samplePayload(t)
+	const marker = "SYNTHETIC-PRIVATE-PARAMETER"
+	for _, suffix := range []string{"?query=" + marker, "#" + marker, "?", "#"} {
+		src := strings.Replace(synthetic, "server:", "proxy-url: 'https://proxy.invalid"+suffix+"'\n    server:", 1)
+		_, err := prepare([]byte(src), "", "", "", nil)
+		if err == nil || strings.Contains(err.Error(), marker) || !strings.Contains(err.Error(), "proxy-url") {
+			t.Fatal("missing safe proxy-url diagnostic")
+		}
+	}
+	for _, scheme := range []string{"http", "https", "socks5"} {
+		src := strings.Replace(synthetic, "server:", "proxy-url: '"+scheme+"://proxy.invalid:3128'\n    server:", 1)
+		if _, err := prepare([]byte(src), "", "", "", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Construct a legacy encrypted backup without running the old installer.
+	p.Portable.Clusters[0].Cluster.Proxy = "https://proxy.invalid/?q=" + marker
+	cipher, err := encryptPayload(p, key.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(privateTemp(t), "old.age")
+	if err := writeNew(path, cipher); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readRecovered(path, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Portable.Clusters[0].Cluster.Proxy != p.Portable.Clusters[0].Cluster.Proxy {
+		t.Fatal("private recovery lost the original proxy URL")
+	}
+	s := service{state: privateTemp(t), browser: filepath.Join(t.TempDir(), "unused-browser")}
+	_, err = s.restoreBackup(context.Background(), request{Path: path, RecoveryIdentity: []byte(key.String())})
+	if err == nil || !strings.Contains(err.Error(), "proxy-url") || strings.Contains(err.Error(), marker) {
+		t.Fatal("legacy restore should request a corrected proxy before enrollment")
+	}
+}
+
+func TestSetupAuthenticationErrorsAreRedacted(t *testing.T) {
+	const marker = "PRIVATE-TEST-VALUE"
+	for _, field := range []string{"tokenFile", "auth-provider", "password", "username", "client-key-data", "client-certificate"} {
+		src := strings.Replace(synthetic, "token: SYNTHETIC-NOT-A-REAL-TOKEN", field+": "+marker, 1)
+		raw := filepath.Join(privateTemp(t), "input")
+		if err := writeNew(raw, []byte(src)); err != nil {
+			t.Fatal(err)
+		}
+		err := run([]string{"--state-dir", privateTemp(t), "setup", raw})
+		if err == nil || !strings.Contains(err.Error(), "user."+field) || strings.Contains(err.Error(), marker) {
+			t.Fatal("missing redacted setup diagnostic", field, err)
+		}
 	}
 }

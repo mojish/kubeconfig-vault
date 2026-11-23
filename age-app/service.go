@@ -658,7 +658,14 @@ func readRecovered(cipherPath string, key *age.HybridIdentity) (*payload, error)
 		return nil, err
 	}
 	defer clear(data)
-	if _, err := prepare(data, "", "", "", nil); err != nil {
+	// Validate the authenticated portable data using the legacy input contract
+	// for private recovery. restoreBackup separately calls prepare before it
+	// publishes a new readable client file.
+	c, err := parseConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := prepareParsed(c, data, "", "", "", nil); err != nil {
 		return nil, errors.New("backup does not contain a supported portable kubeconfig")
 	}
 	return p, nil
