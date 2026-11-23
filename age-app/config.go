@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -30,12 +32,26 @@ type cluster struct {
 	NoCompression bool   `json:"disable-compression,omitempty" yaml:"disable-compression,omitempty"`
 }
 type execConfig struct {
-	APIVersion  string   `json:"apiVersion" yaml:"apiVersion"`
-	Command     string   `json:"command" yaml:"command"`
-	Args        []string `json:"args" yaml:"args"`
-	Interactive string   `json:"interactiveMode" yaml:"interactiveMode"`
-	ClusterInfo bool     `json:"provideClusterInfo" yaml:"provideClusterInfo"`
+	APIVersion  string       `json:"apiVersion" yaml:"apiVersion"`
+	Command     string       `json:"command" yaml:"command"`
+	Args        []string     `json:"args" yaml:"args"`
+	Interactive string       `json:"interactiveMode" yaml:"interactiveMode"`
+	ClusterInfo bool         `json:"provideClusterInfo" yaml:"provideClusterInfo"`
+	Env         emptyExecEnv `json:"-" yaml:"env,omitempty"`
 }
+
+// client-go writes env: null even when no environment overrides exist.
+type emptyExecEnv struct{}
+
+var errExecEnv = errors.New("users[].user.exec.env must be empty in a generated kubeconfig; setup requires inline bearer tokens")
+
+func (*emptyExecEnv) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.SequenceNode && len(n.Content) == 0 {
+		return nil
+	}
+	return errExecEnv
+}
+
 type auth struct {
 	Token string      `json:"token,omitempty" yaml:"token,omitempty"`
 	Exec  *execConfig `json:"exec,omitempty" yaml:"exec,omitempty"`
@@ -113,7 +129,14 @@ func binding(c cluster) string {
 func managed(c config) config {
 	c.Current = ""
 	c.Preferences = nil
-	c.Contexts = append([]namedContext(nil), c.Contexts...)
+	// Kubernetes writes named entries in its own order. Keep the original
+	// arrays intact for editing, including the positional exec arguments.
+	c.Clusters = slices.Clone(c.Clusters)
+	c.Users = slices.Clone(c.Users)
+	c.Contexts = slices.Clone(c.Contexts)
+	slices.SortFunc(c.Clusters, func(a, b namedCluster) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(c.Users, func(a, b namedUser) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(c.Contexts, func(a, b namedContext) int { return cmp.Compare(a.Name, b.Name) })
 	for i := range c.Contexts {
 		c.Contexts[i].Context.Namespace = ""
 	}

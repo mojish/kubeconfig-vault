@@ -84,6 +84,9 @@ requires the usual authenticated save. Both successful paths clear the session.
 The generated `STATE/current/kubeconfig` uses an absolute binary path, exec v1,
 `interactiveMode: Never`, and `provideClusterInfo: true`. Clients may change
 namespace/current-context; other mutations are checked before credential release.
+The order of named clusters, users and contexts can change. Generated exec
+environment lists may be absent, null or empty. A nonempty list, a different
+command or argument sequence, or a changed binding fails validation.
 Exec requests support absent/null cluster extensions and reject nonempty ones;
 see [upstream exec types](https://github.com/kubernetes/client-go/blob/master/pkg/apis/clientauthentication/v1/types.go).
 

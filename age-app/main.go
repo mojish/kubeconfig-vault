@@ -413,11 +413,7 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		if len(a) != 2 {
 			return errors.New("usage: backup NEW-FILE")
 		}
-		snap, err := loadSnapshot(s.state)
-		if err != nil {
-			return err
-		}
-		if err := publishNew(a[1], snap.Cipher); err != nil {
+		if err := backupGeneration(s.state, a[1]); err != nil {
 			return err
 		}
 		fmt.Fprintln(os.Stdout, "Encrypted backup created. Keep your offline recovery key separately.")

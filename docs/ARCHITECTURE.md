@@ -16,7 +16,11 @@ confirmation the CLI passes it over the private, peer-checked Unix socket for
 verification. It does not write it to a file, standard output, or the browser.
 The optional `recovery-key new` command creates a private file with mode 0600.
 Keep the identity separately because it can decrypt without the YubiKey.
-The backup command copies the encrypted generation only. The offline recovery identity and that ciphertext suffice to enroll a key on another laptop. Full filesystem backups of live state can include plaintext edits.
+Backup resolves the current generation once, checks its private directories
+and bounded ciphertext file, and copies it to a new destination. It can run
+with missing metadata or a damaged generated kubeconfig. The age header check
+detects a file-format mismatch. Use `recover --check` to authenticate the payload
+and verify recovery. Full filesystem backups of live state can include plaintext edits.
 
 The browser sees age file keys and recipient stanzas, never Kubernetes plaintext
 or the private recovery key. PRF derivation stays in Typage/browser memory.

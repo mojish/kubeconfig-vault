@@ -86,6 +86,7 @@ kubeconfig-vault backup cluster-backup.age
 kubeconfig-vault recover cluster-backup.age --check
 ```
 
+Backup also works if a client damaged or deleted the generated kubeconfig.
 The check asks for the recovery key in a hidden terminal prompt and verifies
 that the backup contains a usable config. On a new laptop, install the helper,
 bring your trusted backup and recovery key, then run:

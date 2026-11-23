@@ -160,6 +160,32 @@ func loadSnapshot(state string) (*snapshot, error) {
 	return loadGeneration(state, id)
 }
 
+func backupGeneration(state, out string) error {
+	id, err := currentID(state)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return errors.New("no age vault imported")
+	}
+	// Resolve current once. A concurrent save publishes another directory,
+	// while an opened file remains readable even if its generation is pruned.
+	dir := filepath.Join(state, "generations", id)
+	for _, path := range []string{state, filepath.Dir(dir), dir} {
+		if err := checkPrivateDir(path); err != nil {
+			return err
+		}
+	}
+	cipher, err := readBounded(filepath.Join(dir, "vault.age"), maxVault, true)
+	if err != nil {
+		return err
+	}
+	if !bytes.HasPrefix(cipher, []byte("age-encryption.org/v1\n")) {
+		return errors.New("selected generation has no age ciphertext header")
+	}
+	return publishNew(out, cipher)
+}
+
 func loadGeneration(state, id string) (*snapshot, error) {
 	s, err := loadGenerationSettings(state, id)
 	if err != nil {
