@@ -115,7 +115,9 @@ sh install.sh --from-dir /tmp/kubeconfig-vault-release /tmp/kubeconfig-vault-bin
 The [release workflow](../.github/workflows/release.yml) runs for version tags
 such as `v0.1.0`. It runs the regular CI suite, makes four tarballs, and tests
 the exact archives by installing them and running `--version` on Ubuntu and
-macOS on x86-64 and ARM64. After success it checks the complete checksum
+macOS on x86-64 and ARM64. With `KUBE_UNLOCK_TEST_BINARY` set to the installed
+executable, the browser integration also exercises those packages on Linux x86-64
+and both Mac targets. After success it checks the complete checksum
 manifest, attaches GitHub build attestations, and creates a draft release.
 A maintainer reviews and publishes the draft.
 

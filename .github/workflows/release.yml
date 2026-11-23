@@ -60,6 +60,27 @@ jobs:
           version=$("$RUNNER_TEMP/kcv bin/kube-unlock-age" --version)
           test "$version" = "kube-unlock-age $GITHUB_REF_NAME"
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: runner.os == 'macOS' || runner.arch == 'X64'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: runner.os == 'macOS' || runner.arch == 'X64'
+        with:
+          node-version: '22'
+      - name: Exercise the packaged CLI with virtual USB authentication and kubectl
+        if: runner.os == 'macOS' || runner.arch == 'X64'
+        working-directory: age-app
+        shell: bash
+        env:
+          KUBE_UNLOCK_TEST_BINARY: ${{ runner.temp }}/kcv bin/kube-unlock-age
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]] && ! command -v kubectl >/dev/null; then
+            brew install kubectl
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:browser
+
   draft:
     needs: [test, smoke]
     runs-on: ubuntu-24.04

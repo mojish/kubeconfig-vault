@@ -43,9 +43,14 @@ async function bootstrapTarget(uri){
 }
 
 try {
-  await build({absWorkingDir:cwd,entryPoints:["web/app.mjs"],outfile:"web/app.js",bundle:true,format:"esm",platform:"browser",target:"es2023",legalComments:"inline"});
-  const compiled=spawnSync("go",["build","-race","-o",executable,"."],{cwd,encoding:"utf8",timeout:60000,env:{...process.env,GOTOOLCHAIN:"local",GOPROXY:"off",GOPATH:process.env.GOPATH||join(tmpdir(),"kube-unlock-go-path"),GOCACHE:process.env.GOCACHE||join(tmpdir(),"kube-unlock-go-cache")}});
-  if(compiled.status!==0)throw new Error("Native integration build failed: "+compiled.stderr);
+  if (process.env.KUBE_UNLOCK_TEST_BINARY) {
+    await copyFile(process.env.KUBE_UNLOCK_TEST_BINARY,executable);
+    await chmod(executable,0o700);
+  } else {
+    await build({absWorkingDir:cwd,entryPoints:["web/app.mjs"],outfile:"web/app.js",bundle:true,format:"esm",platform:"browser",target:"es2023",legalComments:"inline"});
+    const compiled=spawnSync("go",["build","-race","-o",executable,"."],{cwd,encoding:"utf8",timeout:60000,env:{...process.env,GOTOOLCHAIN:"local",GOPROXY:"off",GOPATH:process.env.GOPATH||join(tmpdir(),"kube-unlock-go-path"),GOCACHE:process.env.GOCACHE||join(tmpdir(),"kube-unlock-go-cache")}});
+    if(compiled.status!==0)throw new Error("Native integration build failed: "+compiled.stderr);
+  }
   await writeFile(launcher,`#!${process.execPath}\nimport('node:fs').then(fs=>fs.appendFileSync(${JSON.stringify(urlsFile)},process.argv[2]+'\\n',{mode:0o600}));\n`,{mode:0o700});
   const cert=join(root,"cert.pem"),key=join(root,"key.pem");
   const generated=spawnSync("openssl",["req","-x509","-newkey","rsa:2048","-nodes","-keyout",key,"-out",cert,"-subj","/CN=localhost","-days","1","-addext","subjectAltName=IP:127.0.0.1"],{encoding:"utf8",timeout:15000});
