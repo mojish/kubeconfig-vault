@@ -57,8 +57,10 @@ jobs:
         shell: bash
         run: |
           sh "$RUNNER_TEMP/kcv-release/install.sh" --from-dir "$RUNNER_TEMP/kcv-release" "$RUNNER_TEMP/kcv bin"
-          version=$("$RUNNER_TEMP/kcv bin/kube-unlock-age" --version)
-          test "$version" = "kube-unlock-age $GITHUB_REF_NAME"
+          version=$("$RUNNER_TEMP/kcv bin/kubeconfig-vault" --version)
+          test "$version" = "kubeconfig-vault $GITHUB_REF_NAME"
+          test "$(readlink "$RUNNER_TEMP/kcv bin/kube-unlock-age")" = kubeconfig-vault
+          test "$("$RUNNER_TEMP/kcv bin/kube-unlock-age" --version)" = "$version"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: runner.os == 'macOS' || runner.arch == 'X64'
@@ -73,7 +75,7 @@ jobs:
         working-directory: age-app
         shell: bash
         env:
-          KUBE_UNLOCK_TEST_BINARY: ${{ runner.temp }}/kcv bin/kube-unlock-age
+          KUBE_UNLOCK_TEST_BINARY: ${{ runner.temp }}/kcv bin/kubeconfig-vault
         run: |
           if [[ "$RUNNER_OS" == macOS ]] && ! command -v kubectl >/dev/null; then
             brew install kubectl

@@ -10,6 +10,9 @@ verified HTTPS. See [compatibility](#compatibility) for tested configurations.
 
 ## Install and set up
 
+If upgrading from v0.2.0 or v0.1.1, first run `kube-unlock-age stop`. Install
+into the same directory so existing kubeconfigs can keep calling the old name.
+
 Download the [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest) installer:
 
 ```sh
@@ -17,15 +20,18 @@ curl -fL -o install.sh https://github.com/mojish/kubeconfig-vault/releases/lates
   sh install.sh
 ```
 
-Close any editors writing your kubeconfig, then run:
+If your vault is already set up with v0.2.0, you're done. Run
+`kubeconfig-vault status` to see its state.
+
+For a new vault, close any editors writing your kubeconfig, then run:
 
 ```sh
-kube-unlock-age setup
+kubeconfig-vault setup
 ```
 
-If the shell cannot find the command, use `~/.local/bin/kube-unlock-age setup`.
+If the shell cannot find the command, use `~/.local/bin/kubeconfig-vault setup`.
 Setup uses `~/.kube/config` or the single file selected by `KUBECONFIG`. For
-a list of files, choose one with `kube-unlock-age setup FILE`. For an existing
+a list of files, choose one with `kubeconfig-vault setup FILE`. For an existing
 symlink, setup prints the target it will replace. All aliases to that target
 will use the vault.
 
@@ -37,18 +43,18 @@ will use the vault.
    Clients already reading the selected file pick up the vault through that path.
 
 Setup verifies both decryption methods, saves an encrypted copy of your exact
-original, and switches the client file. Repeat setup to resume. For an existing
-v0.1.1 install, run `kube-unlock-age stop` before upgrading, then run setup.
-It can convert a regular plaintext rollback copy using the existing vault and key.
+original, and switches the client file. Repeat setup to resume. When upgrading
+from v0.1.1, run setup to convert a regular plaintext rollback copy using your
+existing vault and key.
 
 ## Everyday use
 
 | To | Run |
 | --- | --- |
-| Edit in your normal editor | `kube-unlock-age config edit` |
-| See the session and open edits | `kube-unlock-age status` |
-| End the helper session early | `kube-unlock-age lock` |
-| Undo setup and restore the original plaintext file | `kube-unlock-age config unlink` |
+| Edit in your normal editor | `kubeconfig-vault config edit` |
+| See the session and open edits | `kubeconfig-vault status` |
+| End the helper session early | `kubeconfig-vault lock` |
+| Undo setup and restore the original plaintext file | `kubeconfig-vault config unlink` |
 
 Editing creates a private plaintext file. Set `VISUAL` or `EDITOR` to an editor
 that waits until you close the file. Disable editor backups for sensitive files.
@@ -63,8 +69,8 @@ Save the encrypted backup somewhere separate from the laptop, and store the
 recovery key separately from that backup. Use a new filename for each backup.
 
 ```sh
-kube-unlock-age backup cluster-backup.age
-kube-unlock-age recover cluster-backup.age --check
+kubeconfig-vault backup cluster-backup.age
+kubeconfig-vault recover cluster-backup.age --check
 ```
 
 The check asks for the recovery key in a hidden terminal prompt and verifies
@@ -72,13 +78,13 @@ that the backup contains a usable config. On a new laptop, install the helper,
 bring your trusted backup and recovery key, then run:
 
 ```sh
-kube-unlock-age restore cluster-backup.age
-kube-unlock-age config link
+kubeconfig-vault restore cluster-backup.age
+kubeconfig-vault config link
 ```
 
 Restore enrolls a security key and rebuilds client paths for this laptop.
 For an offline plaintext export without a YubiKey, run
-`kube-unlock-age recover cluster-backup.age --out recovered-config`.
+`kubeconfig-vault recover cluster-backup.age --out recovered-config`.
 Treat that output as a live credential.
 
 ## Compatibility

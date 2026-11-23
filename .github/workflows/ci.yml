@@ -71,8 +71,8 @@ jobs:
           npm run test:ui
       - name: Build native executable
         run: |
-          go build -trimpath -o kube-unlock-age .
-          ./kube-unlock-age --help
+          go build -trimpath -o kubeconfig-vault .
+          ./kubeconfig-vault --help
       - name: Check Linux integration prerequisites
         if: runner.os == 'Linux'
         run: |

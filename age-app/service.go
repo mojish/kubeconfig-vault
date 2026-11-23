@@ -348,6 +348,7 @@ func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	migrateCommandName(&old.Projection, s.executable)
 	if !accept && !equalProjection(old.Projection, p.Projection) {
 		return nil, errors.New("connection, trust, or user mapping changed; review the edit then use --accept-connection-changes")
 	}

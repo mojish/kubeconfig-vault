@@ -67,5 +67,5 @@ button.addEventListener("click", async () => {
   finally { reply.fileKey = ""; busy = false; }
   await poll();
 });
-if (!/^[a-f0-9]{64}$/.test(capability)) finish("Start an operation from kube-unlock-age to open a new authentication page.");
+if (!/^[a-f0-9]{64}$/.test(capability)) finish("Start an operation from kubeconfig-vault to open a new authentication page.");
 else { await poll(); setInterval(poll, 300); }

@@ -1,3 +1,4 @@
 node_modules/
 /age-app/web/app.js
 /age-app/kube-unlock-age
+/age-app/kubeconfig-vault

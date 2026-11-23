@@ -52,9 +52,15 @@ case "$bin_dir" in
     *) bin_dir="$PWD/$bin_dir" ;;
 esac
 
-target="$bin_dir/kube-unlock-age"
-if [ -L "$target" ] || [ -d "$target" ]; then
-    fail "Choose an install directory without a symlink or directory at $target"
+target="$bin_dir/kubeconfig-vault"
+legacy="$bin_dir/kube-unlock-age"
+if [ -L "$target" ] || { [ -e "$target" ] && [ ! -f "$target" ]; }; then
+    fail "Choose an install directory with a regular file or unused path at $target"
+fi
+if [ -L "$legacy" ]; then
+    [ "$(readlink "$legacy")" = kubeconfig-vault ] || fail "A different symlink already exists at $legacy"
+elif [ -e "$legacy" ] && [ ! -f "$legacy" ]; then
+    fail "Choose an install directory with a regular file or unused path at $legacy"
 fi
 
 if [ "$mode" = source ]; then
@@ -79,7 +85,7 @@ trap 'exit 1' HUP INT TERM
 if [ "$mode" = source ]; then
     npm ci --include=dev --ignore-scripts --no-audit --no-fund
     npm run build:web
-    go build -trimpath -o "$stage/kube-unlock-age" .
+    go build -trimpath -o "$stage/kubeconfig-vault" .
 else
     asset="kubeconfig-vault-$os-$arch.tar.gz"
     if [ "$mode" = download ]; then
@@ -111,10 +117,13 @@ else
     if [ "${#expected}" -ne 64 ] || [ "$expected" != "${actual%% *}" ]; then
         fail 'Release checksum mismatch. The installed binary was left in place.'
     fi
-    tar -xOf "$release_dir/$asset" kube-unlock-age > "$stage/kube-unlock-age"
-    [ -s "$stage/kube-unlock-age" ] || fail 'The release archive does not contain the executable.'
-    chmod 755 "$stage/kube-unlock-age"
+    # Older published installers also extract this exact member from releases/latest.
+    tar -xOf "$release_dir/$asset" kube-unlock-age > "$stage/kubeconfig-vault"
+    [ -s "$stage/kubeconfig-vault" ] || fail 'The release archive does not contain the executable.'
+    chmod 755 "$stage/kubeconfig-vault"
 fi
 
-mv -f "$stage/kube-unlock-age" "$target"
+ln -s kubeconfig-vault "$stage/kube-unlock-age"
+mv -f "$stage/kubeconfig-vault" "$target"
+mv -f "$stage/kube-unlock-age" "$legacy"
 printf 'Installed %s\n' "$target"

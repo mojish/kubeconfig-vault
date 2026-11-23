@@ -223,7 +223,7 @@ func printPath(state string, args []string) error {
 var version = "dev"
 
 func run(args []string) error {
-	f := flag.NewFlagSet("kube-unlock-age", flag.ContinueOnError)
+	f := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	f.SetOutput(os.Stderr)
 	state := f.String("state-dir", "", "vault state directory (uses the platform default if omitted)")
 	seconds := f.Int("session-seconds", 3600, "absolute session lifetime (1–3600 seconds; new daemon only)")
@@ -231,7 +231,7 @@ func run(args []string) error {
 	showVersion := f.Bool("version", false, "print the build version")
 	f.Usage = func() {
 		fmt.Fprintln(os.Stderr, `Kubeconfig Vault (experimental)
-Usage: kube-unlock-age [global options] COMMAND
+Usage: kubeconfig-vault [global options] COMMAND
 
 setup [FILE]                          Protect the client config and its rollback copy
 restore VAULT.age [--key FILE]         Enroll a security key on a new laptop using an encrypted backup
@@ -267,7 +267,7 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 		return errors.New("invalid command options")
 	}
 	if *showVersion {
-		fmt.Fprintln(os.Stdout, "kube-unlock-age", version)
+		fmt.Fprintln(os.Stdout, commandName, version)
 		return nil
 	}
 	a := f.Args()
@@ -350,7 +350,7 @@ Lock and stop preserve open edits; status reports fully_locked=false in that cas
 	if err != nil {
 		return errors.New("cannot resolve application executable")
 	}
-	s := &service{state: *state, executable: executable, browser: *browser, ttl: time.Duration(*seconds) * time.Second, stop: make(chan struct{})}
+	s := &service{state: *state, executable: installedCommand(executable), browser: *browser, ttl: time.Duration(*seconds) * time.Second, stop: make(chan struct{})}
 	if a[0] == "serve" {
 		if len(a) != 1 {
 			return errors.New("unexpected serve argument")

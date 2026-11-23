@@ -32,7 +32,7 @@ cd age-app
 npm ci --ignore-scripts --no-audit --no-fund
 npm run build:web
 go mod download
-go build -o kube-unlock-age .
+go build -o kubeconfig-vault .
 go test -race ./...
 go vet ./...
 npm run test:ui
@@ -60,7 +60,7 @@ permissions, and no configured secrets. Dependabot proposes dependency updates.
 
 ## Test with a physical YubiKey
 
-Build `kube-unlock-age` in `age-app` using the commands above, then run from that
+Build `kubeconfig-vault` in `age-app` using the commands above, then run from that
 directory:
 
 ```sh
@@ -98,7 +98,8 @@ replace a lost YubiKey, import the recovered plaintext into a new state director
 with the replacement key and verify it before switching clients. Select the new
 state directory with `--state-dir PATH` before the `import` command.
 
-For an upgrade, stop the helper with `kube-unlock-age stop` using the same
+For an upgrade, stop the helper with `kubeconfig-vault stop`
+(`kube-unlock-age stop` on v0.2.0 or earlier) using the same
 `--state-dir` as your import if you chose a custom one. Run the installer again
 with the same destination so the generated kubeconfig keeps working.
 
@@ -109,7 +110,7 @@ On Linux, build release assets into a new directory without creating a tag:
 ```sh
 ./scripts/package-release.sh v0.1.0 /tmp/kubeconfig-vault-release
 sh install.sh --from-dir /tmp/kubeconfig-vault-release /tmp/kubeconfig-vault-bin
-/tmp/kubeconfig-vault-bin/kube-unlock-age --version
+/tmp/kubeconfig-vault-bin/kubeconfig-vault --version
 ```
 
 The [release workflow](../.github/workflows/release.yml) runs for version tags

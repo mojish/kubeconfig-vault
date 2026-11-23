@@ -4,7 +4,11 @@
 
 `--version` prints the packaged release version. Source builds report `dev`.
 
-Defaults are `~/.local/share/kube-unlock-age` on Linux and
+The installed command is `kubeconfig-vault`. The installer also provides
+`kube-unlock-age` for existing kubeconfigs. On the next verified edit, the helper
+updates the embedded command when the old path is the installer-created alias.
+
+State directories remain `~/.local/share/kube-unlock-age` on Linux and
 `~/Library/Application Support/kube-unlock-age` on macOS. `--state-dir` selects a
 private directory; Unix socket limits also constrain its path length.
 `--session-seconds` accepts 1–3600, default 3600, and affects only a new daemon.

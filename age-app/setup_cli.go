@@ -69,7 +69,7 @@ func (s *service) clientAction(r request) error {
 	result, err := s.rpc(r)
 	if err != nil {
 		if err.Error() == "unsupported operation" {
-			return errors.New("an older helper is running; run kube-unlock-age stop and retry")
+			return errors.New("an older helper is running; run kubeconfig-vault stop and retry")
 		}
 		return err
 	}

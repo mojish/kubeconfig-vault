@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, copyFile, readFile, readlink, symlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
+import { mkdtemp, copyFile, readFile, readlink, rename, symlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
 import https from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +15,9 @@ import { chromeConnection } from "./test-support/cdp.mjs";
 const cwd = fileURLToPath(new URL(".", import.meta.url));
 const root = await mkdtemp(join(tmpdir(), "kua-"));
 let state = join(root, "state");
-const executable = join(root, "app"), launcher = join(root,"browser"), urlsFile = join(root,"urls");
+const legacyExecutable = join(root, "kube-unlock-age");
+let executable = legacyExecutable;
+const launcher = join(root,"browser"), urlsFile = join(root,"urls");
 const recovery = join(root,"offline-key"), source = join(root,"source"), children = [];
 const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
 let acceptedToken = tokenA, server, failure;
@@ -72,8 +74,15 @@ try {
   assert.equal(prematureLink.code, 1);
   assert.equal(await readFile(source, "utf8"), original);
   await assert.rejects(stat(source + ".before-kubeconfig-vault"), { code: "ENOENT" });
-  const daemon=spawn(executable,["--state-dir",state,"--browser",launcher,"serve"],{stdio:["ignore","ignore","pipe"]});children.push(daemon);let daemonLog="";daemon.stderr.on("data",b=>daemonLog+=b);
-  await waitFor(async()=>{try{return(await stat(join(state,"session.sock"))).isSocket()}catch{return false}},"private daemon socket");
+  let daemonLog = "";
+  async function startDaemon() {
+    const child = spawn(executable, ["--state-dir",state,"--browser",launcher,"serve"], {stdio:["ignore","ignore","pipe"]});
+    children.push(child);
+    child.stderr.on("data", chunk => daemonLog += chunk);
+    await waitFor(async()=>{try{return(await stat(join(state,"session.sock"))).isSocket()}catch{return false}},"private daemon socket");
+    return child;
+  }
+  let daemon = await startDaemon();
   const nonInteractive = await launch(["import", source], { detached: true }).promise;
   assert.equal(nonInteractive.code, 1);
   assert.match(nonInteractive.stderr, /terminal is required/);
@@ -135,6 +144,16 @@ try {
   await assert.rejects(stat(source + ".before-kubeconfig-vault"), {code:"ENOENT"});
   assert.match(await cli("setup",source),/Already set up/);
 
+  // Reproduce the install layout change with this disposable, already-enrolled vault.
+  assert.ok(projection.includes(legacyExecutable));
+  const oldDaemonExit = once(daemon, "exit");
+  await cli("stop");
+  await oldDaemonExit;
+  executable = join(root, "kubeconfig-vault");
+  await rename(legacyExecutable, executable);
+  await symlink("kubeconfig-vault", legacyExecutable);
+  daemon = await startDaemon();
+
   const kube=()=>{
     const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:source},stdio:["ignore","pipe","pipe"]});
     children.push(p);let stdout="",stderr="";const result={done:false};p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);result.promise=new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;Object.assign(result,{code,stdout,stderr});resolve(result)})});return result;
@@ -167,6 +186,8 @@ try {
   assert.deepEqual(await readFile(join(state,"current","vault.age")),initialGeneration);assert.ok(await stat(edit));
   sourceObject.users[0].user.token=tokenB;await writeFile(edit,JSON.stringify(sourceObject,null,2),{mode:0o600});
   await successful(launch(["config","lock"]));acceptedToken=tokenB;
+  const savedProjection = await readFile(generatedConfig, "utf8");
+  assert.ok(savedProjection.includes(executable) && !savedProjection.includes(legacyExecutable));
   assert.equal(await stat(edit).catch(()=>false),false);assert.equal(JSON.parse(await cli("status")).fully_locked,true);
   const closedEdit = await launch(["path", "edit"]).promise;
   assert.equal(closedEdit.code, 1);

@@ -26,8 +26,11 @@ for os in linux darwin; do
     for arch in amd64 arm64; do
         printf 'Building %s/%s\n' "$os" "$arch"
         CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
-            -ldflags "-X main.version=$tag" -o "$scratch/kube-unlock-age" .
-        tar -czf "$out/kubeconfig-vault-$os-$arch.tar.gz" -C "$scratch" kube-unlock-age LICENSE
+            -ldflags "-X main.version=$tag" -o "$scratch/kubeconfig-vault" .
+        # Store the binary once. v0.2.0 installers read the first member by name.
+        ln -f "$scratch/kubeconfig-vault" "$scratch/kube-unlock-age"
+        tar -czf "$out/kubeconfig-vault-$os-$arch.tar.gz" -C "$scratch" kube-unlock-age kubeconfig-vault LICENSE
+        rm "$scratch/kube-unlock-age"
     done
 done
 

@@ -18,7 +18,7 @@ const root = await mkdtemp(join(tmpdir(), "kua-physical-"));
 const state = join(root, "state"), profile = join(root, "chrome");
 const source = join(root, "source"), recovery = join(root, "offline-key");
 const launcher = join(root, "browser"), launches = join(root, "launches");
-const executable = fileURLToPath(new URL("./kube-unlock-age", import.meta.url));
+const executable = fileURLToPath(new URL("./kubeconfig-vault", import.meta.url));
 const chrome = process.env.KUBE_UNLOCK_TEST_CHROME || (process.platform === "darwin"
   ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
 const chromeArgs = [`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check",
