@@ -200,7 +200,10 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		if paths, err := s.editPaths(); err != nil {
 			return nil, err
 		} else if len(paths) != 0 {
-			return nil, errors.New("an edit already exists; save or discard it first")
+			if len(paths) > 1 || paths[0] == s.pendingEditPath() {
+				return nil, errors.New("an interrupted save remains; run kubeconfig-vault status and preserve the files you need before using config discard")
+			}
+			return nil, errors.New("a plaintext edit already exists; run kubeconfig-vault status to locate it, then close your editor and run kubeconfig-vault config lock")
 		}
 		s.edit = nil
 		p, snap, err := s.open(ctx, "Unlock a plaintext copy for editing")
@@ -455,6 +458,12 @@ func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 		}
 		return s.editSaved(false)
 	}
+	// Syntax and supported fields can be checked without opening the vault.
+	// Keep the previous generation authenticated for every changed save.
+	parsed, err := parseForProjection(b)
+	if err != nil {
+		return nil, fmt.Errorf("%w; plaintext edit preserved, fix the file and retry kubeconfig-vault config lock", err)
+	}
 	c, err := newCeremony(ctx, "Validate and encrypt your edited kubeconfig", s.browser, 3)
 	if err != nil {
 		return nil, err
@@ -469,7 +478,7 @@ func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 	if old.Meta != snap.Meta || !equalProjection(old.Projection, snap.Projection) {
 		return nil, errors.New("vault metadata or generated settings changed")
 	}
-	p, err := prepare(b, old.Base, s.state, s.executable, old)
+	p, err := prepareParsed(parsed, b, old.Base, s.state, s.executable, old)
 	if err != nil {
 		return nil, err
 	}

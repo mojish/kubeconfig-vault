@@ -211,14 +211,19 @@ func serializeConfig(c config) ([]byte, error) {
 }
 
 func prepare(source []byte, base, state, executable string, previous *payload) (*payload, error) {
-	c, err := parseConfig(source)
+	c, err := parseForProjection(source)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProjectionProxies(c); err != nil {
-		return nil, err
-	}
 	return prepareParsed(c, source, base, state, executable, previous)
+}
+
+func parseForProjection(source []byte) (config, error) {
+	c, err := parseConfig(source)
+	if err != nil {
+		return c, err
+	}
+	return c, validateProjectionProxies(c)
 }
 
 // A generated client file stores proxy-url in readable form. Older encrypted
