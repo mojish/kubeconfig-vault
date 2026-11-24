@@ -95,6 +95,57 @@ func TestRestoreMissingLegacyBackupPreservesLink(t *testing.T) {
 	}
 }
 
+func TestInterruptedUnlinkPreservesAmbiguousState(t *testing.T) {
+	for _, tc := range []struct {
+		name, marker, extra, want string
+		cancel                    bool
+	}{
+		{"wrong length", "short", "", "invalid completion receipt", false},
+		{"two receipts", strings.Repeat("x", 32), "receipt", "conflicting", false},
+		{"writer lock", strings.Repeat("x", 32), "lock", "locked", false},
+		{"legacy backup", strings.Repeat("x", 32), "legacy", "rollback state changed", false},
+		{"cancelled", strings.Repeat("x", 32), "", "canceled", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, err := filepath.EvalSymlinks(privateTemp(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry := filepath.Join(dir, "client")
+			s := service{state: privateTemp(t)}
+			marker := s.receipt(entry) + ".restored"
+			files := map[string]string{entry: "synthetic client", marker: tc.marker}
+			switch tc.extra {
+			case "receipt":
+				files[s.receipt(entry)] = strings.Repeat("r", 32)
+			case "lock":
+				files[entry+".lock"] = ""
+			case "legacy":
+				files[entry+configBackupSuffix] = "synthetic backup"
+			}
+			for name, data := range files {
+				if err := os.WriteFile(name, []byte(data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancel {
+				cancel()
+			}
+			if _, err := s.undoSetup(ctx, entry); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q, got %v", tc.want, err)
+			}
+			for name, data := range files {
+				got, err := os.ReadFile(name)
+				if err != nil || string(got) != data {
+					t.Fatalf("failed to preserve %s", filepath.Base(name))
+				}
+			}
+		})
+	}
+}
+
 func TestSetupExplainsInterruptedNoOriginalAttachment(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(privateTemp(t))
 	if err != nil {

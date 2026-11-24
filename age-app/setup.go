@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -106,6 +107,11 @@ const noOriginalReceipt = "no-original-v1\n"
 
 func (s *service) linkReceipt(entry string) (present, noOriginal bool, err error) {
 	path := s.receipt(entry)
+	if restored, err := existsEntry(path + ".restored"); err != nil {
+		return false, false, err
+	} else if restored {
+		return false, false, errors.New("unfinished unlink; run config unlink for this client to finish cleanup")
+	}
 	present, err = existsEntry(path)
 	if err != nil || !present {
 		return
@@ -123,7 +129,11 @@ func (s *service) linkReceipt(entry string) (present, noOriginal bool, err error
 	return true, false, nil
 }
 func (s *service) verifyReceipt(entry string, cipher []byte) error {
-	data, err := readBounded(s.receipt(entry), 64, true)
+	return verifyRollbackDigest(s.receipt(entry), cipher)
+}
+
+func verifyRollbackDigest(receipt string, cipher []byte) error {
+	data, err := readBounded(receipt, 64, true)
 	want := sha256.Sum256(cipher)
 	if err != nil || !bytes.Equal(data, want[:]) {
 		return errors.New("encrypted rollback is missing or changed; client preserved")
@@ -372,14 +382,44 @@ func (s *service) undoSetup(ctx context.Context, alias string) (any, error) {
 		return nil, err
 	}
 	sealed := path + sealedSuffix
+	receipt := s.receipt(path)
+	completed, err := existsEntry(receipt + ".restored")
+	if err != nil {
+		return nil, err
+	}
+	if completed {
+		if present, err := existsEntry(receipt); err != nil || present {
+			return nil, errors.New("conflicting rollback receipts; files preserved")
+		}
+		receipt += ".restored"
+		present, err := existsEntry(sealed)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
+			return s.finishUnlinkReceipt(ctx, alias, path)
+		}
+	}
 	cipher, err := readBounded(sealed, maxVault, true)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.verifyReceipt(path, cipher); err != nil {
+	if err := verifyRollbackDigest(receipt, cipher); err != nil {
 		return nil, err
 	}
-	snap, err := loadSnapshot(s.state)
+	// The rollback is independently authenticated. A missing generated client
+	// file or active ciphertext need not prevent exact restoration.
+	id, err := currentID(s.state)
+	if err != nil || id == "" {
+		return nil, errors.New("cannot locate the active vault's security-key metadata")
+	}
+	dir := filepath.Join(s.state, "generations", id)
+	for _, parent := range []string{filepath.Dir(dir), dir} {
+		if err := checkPrivateDir(parent); err != nil {
+			return nil, err
+		}
+	}
+	snap, err := loadMetadata(dir, id)
 	if err != nil {
 		return nil, err
 	}
@@ -395,9 +435,6 @@ func (s *service) undoSetup(ctx context.Context, alias string) (any, error) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if !s.isLinked(path) {
-			return errors.New("client link changed; original preserved")
-		}
 		if present, err := existsEntry(path + configBackupSuffix); err != nil || present {
 			return errors.New("finish setup to verify the legacy backup before unlinking")
 		}
@@ -405,13 +442,34 @@ func (s *service) undoSetup(ctx context.Context, alias string) (any, error) {
 		if err != nil || !bytes.Equal(current, cipher) {
 			return errors.New("encrypted backup changed")
 		}
-		if err := s.verifyReceipt(path, current); err != nil {
+		if err := verifyRollbackDigest(receipt, current); err != nil {
 			return err
 		}
-		if err := replaceClient(path, p.Source, ""); err != nil {
-			return err
+		if s.isLinked(path) {
+			if completed {
+				return errors.New("restored receipt conflicts with a managed link; files preserved")
+			}
+			if err := replaceClient(path, p.Source, ""); err != nil {
+				return err
+			}
+		} else {
+			// A previous run can stop after restoring the original but before
+			// removing its ciphertext. Never replace an existing plaintext file.
+			if err := syncRestoredClient(path, p.Source); err != nil {
+				return err
+			}
 		}
 		if err := syncDir(filepath.Dir(path)); err != nil {
+			return err
+		}
+		if !completed {
+			if err := renameNew(receipt, receipt+".restored"); err != nil {
+				return errors.New("original restored; could not record cleanup progress")
+			}
+			receipt += ".restored"
+		}
+		// Make the completion marker durable before removing the rollback.
+		if err := syncDir(s.state); err != nil {
 			return err
 		}
 		if err := os.Remove(sealed); err != nil {
@@ -420,13 +478,80 @@ func (s *service) undoSetup(ctx context.Context, alias string) (any, error) {
 		if err := syncDir(filepath.Dir(path)); err != nil {
 			return err
 		}
-		if err := os.Remove(s.receipt(path)); err != nil {
-			return errors.New("original restored in plaintext; rollback receipt cleanup failed")
-		}
-		return syncDir(s.state)
+		return removeRestoredReceipt(receipt)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return "Original kubeconfig restored.", nil
+}
+
+// Only the journal entry remains after the original was durably restored and
+// its encrypted rollback removed. Do not read or rewrite the client file.
+func (s *service) finishUnlinkReceipt(ctx context.Context, alias, path string) (any, error) {
+	err := withClientLocks(alias, path, func() error {
+		entry, err := clientEntry(s.state, alias)
+		if err != nil || entry != path || s.isLinked(path) {
+			return errors.New("client path changed; rollback receipt preserved")
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return errors.New("restored client file is unavailable; rollback receipt preserved")
+		}
+		receipt := s.receipt(path)
+		for _, other := range []string{receipt, path + sealedSuffix, path + configBackupSuffix} {
+			if present, err := existsEntry(other); err != nil || present {
+				return errors.New("rollback state changed; retry unlink after inspecting the client")
+			}
+		}
+		digest, err := readBounded(receipt+".restored", sha256.Size, true)
+		if err != nil || len(digest) != sha256.Size {
+			return errors.New("invalid completion receipt; files preserved")
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := syncDir(filepath.Dir(path)); err != nil {
+			return err
+		}
+		return removeRestoredReceipt(receipt + ".restored")
+	})
+	if err != nil {
+		return nil, err
+	}
+	return "Finished cleanup from the previous restore. The client file was left in place.", nil
+}
+
+// A writer may have saved identical bytes without syncing them. Flush the
+// descriptor we verified before giving up the encrypted rollback.
+func syncRestoredClient(path, original string) error {
+	f, err := openBounded(path, maxSource, true)
+	if err != nil {
+		return errors.New("cannot verify restored client; client and encrypted rollback preserved")
+	}
+	defer f.Close()
+	existing, err := io.ReadAll(io.LimitReader(f, maxSource+1))
+	defer clear(existing)
+	if err != nil || len(existing) > maxSource || !bytes.Equal(existing, []byte(original)) {
+		return errors.New("client differs from the verified original; client and encrypted rollback preserved")
+	}
+	if err := f.Sync(); err != nil {
+		return errors.New("could not sync restored client; encrypted rollback preserved")
+	}
+	opened, err := f.Stat()
+	current, pathErr := os.Lstat(path)
+	if err != nil || pathErr != nil || !os.SameFile(opened, current) {
+		return errors.New("restored client changed during verification; encrypted rollback preserved")
+	}
+	return nil
+}
+
+func removeRestoredReceipt(receipt string) error {
+	if err := os.Remove(receipt); err != nil {
+		return errors.New("original restored in plaintext; rollback receipt cleanup failed")
+	}
+	if err := syncDir(filepath.Dir(receipt)); err != nil {
+		return errors.New("original restored and receipt removed; final cleanup could not be synced to disk")
+	}
+	return nil
 }

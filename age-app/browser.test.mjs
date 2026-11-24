@@ -3,11 +3,12 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, copyFile, readFile, readlink, rename, symlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, copyFile, readFile, readlink, realpath, rename, symlink, writeFile, rm, readdir, chmod, stat } from "node:fs/promises";
 import https from "node:https";
 import http from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
@@ -477,8 +478,45 @@ try {
   assert.notEqual((await launch(["setup",source]).promise).code,0);
   assert.equal(await readlink(source),generatedConfig);
   await writeFile(rollback,safeRollback);
+  const canonicalSource = join(await realpath(dirname(source)), basename(source));
+  const receipt = join(state, "rollback-" + createHash("sha256").update(canonicalSource).digest("hex") + ".sha256");
+  const receiptBytes = await readFile(receipt);
+  const savedClient = await readFile(generatedConfig);
+  await rm(generatedConfig);
   await successful(launch(["config","unlink","--kubeconfig",clientAlias]));
   assert.equal(await readFile(source,"utf8"), original);
+  await writeFile(generatedConfig, savedClient, {mode:0o600});
+
+  // Resume after plaintext replacement, and after durable restoration was
+  // recorded. An edit made after restoration must survive either retry.
+  const restoredInode = (await stat(source)).ino;
+  for (const journal of [receipt, receipt + ".restored"]) {
+    await writeFile(journal, receiptBytes, {mode:0o600});
+    await writeFile(rollback, safeRollback, {mode:0o600});
+    const changed = original + "\n# local edit after interrupted unlink\n";
+    await writeFile(source, changed);
+    const conflicted = launch(["config","unlink","--kubeconfig",clientAlias]);
+    await complete(conflicted);
+    assert.notEqual(conflicted.code, 0);
+    assert.equal(await readFile(source,"utf8"), changed);
+    assert.deepEqual(await readFile(rollback), safeRollback);
+    assert.deepEqual(await readFile(journal), receiptBytes);
+    await writeFile(source, original);
+    await successful(launch(["config","unlink","--kubeconfig",clientAlias]));
+    assert.equal((await stat(source)).ino, restoredInode);
+    for (const path of [receipt, receipt + ".restored", rollback]) {
+      await assert.rejects(stat(path), {code:"ENOENT"});
+    }
+  }
+  // The ciphertext removal was already durable. Only the receipt remains.
+  await writeFile(receipt + ".restored", receiptBytes, {mode:0o600});
+  const beforeReceiptCleanup = (await urls()).length;
+  await cli("config","unlink","--kubeconfig",clientAlias);
+  assert.equal((await urls()).length, beforeReceiptCleanup);
+  assert.equal(await readFile(source,"utf8"), original);
+  assert.equal((await stat(source)).ino, restoredInode);
+  await assert.rejects(stat(receipt + ".restored"), {code:"ENOENT"});
+  console.log("PASS: exact rollback with a missing generated config; interrupted unlink verifies an existing original and preserves a later edit.");
   // A v0.1.1 link can have an old plaintext backup after an edited vault has moved on.
   await writeFile(source+".before-kubeconfig-vault", original, {mode:0o600});
   await rm(source);

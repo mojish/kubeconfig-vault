@@ -65,6 +65,8 @@ This design protects a stored kubeconfig. A process running as the same OS user,
 
 Setup verifies decryption through both recipients before publishing. It checks that the source and any CA inputs still match, verifies the encrypted rollback, and replaces the source under client-go locks. Saves stage and read back the new generation before atomically switching `current`. The active and previous generations persist until authenticated pruning. A failed write can leave an unreferenced generation. A sync failure after a switch reports uncertain durability.
 
+Unlink authenticates the original rollback with the enrolled key. It stages plaintext in a private sibling directory before replacing the client path. A process killed before the rename may leave the staged plaintext at `.kubeconfig-vault-*/client`. After syncing the restored client, unlink renames the digest receipt with a `.restored` suffix and syncs the state directory before deleting the encrypted rollback. A retry with that rollback still present checks the existing plaintext against the decrypted original and syncs the verified file descriptor. Once rollback removal is durable, a retry can remove the completion receipt without reading the client file.
+
 An encrypted backup copies one selected generation. The age header identifies its format. `recover --check` with the backup path and private key verifies decryptability. Anyone with the public recovery recipient can encrypt to it, so the provenance of a backup matters. A full backup of the state directory can include an open plaintext edit.
 
 ## Editing and limitations
