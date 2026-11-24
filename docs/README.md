@@ -66,6 +66,8 @@ For a separate unlock → edit → lock workflow, run `kubeconfig-vault config u
 
 Run `kubeconfig-vault status`. An open edit is plaintext and can survive a crash, logout, or `lock`. If the editor exited early or the YAML is invalid, use `kubeconfig-vault path edit` to locate your working file. Open that file in your editor, fix and save it, close the editor, then run `kubeconfig-vault config lock`. Syntax errors are reported before another security-key prompt. The last encrypted generation stays usable while you correct the edit.
 
+If the helper stopped while you were waiting to approve the save, `status` can still show the open edit. A backup taken at that point contains the last completed save. Close the editor and retry `kubeconfig-vault config lock`. It starts the helper and requests fresh approval.
+
 If status lists an interrupted-save path, preserve any changes you need from **each** listed file in a private location. `kubeconfig-vault config discard` deletes the working copies. You can then unlock a fresh edit and apply the changes you preserved.
 
 ## Back up your latest changes

@@ -123,6 +123,13 @@ func TestEndSessionWithAbandonedSocket(t *testing.T) {
 	if err := s.endSession("lock"); err != nil {
 		t.Fatal(err)
 	}
+	got, err := s.inspectStatus()
+	if err != nil || got.HelperRunning || !got.FullyLocked {
+		t.Fatalf("abandoned socket should report a stopped helper: %+v, %v", got, err)
+	}
+	if info, err := os.Lstat(s.socket()); err != nil || info.Mode()&os.ModeSocket == 0 {
+		t.Fatal("status changed the abandoned socket")
+	}
 	lock, err := os.OpenFile(filepath.Join(dir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +140,9 @@ func TestEndSessionWithAbandonedSocket(t *testing.T) {
 	}
 	if err := s.endSession("stop"); err == nil {
 		t.Fatal("reported a stopped session while its daemon lock was held")
+	}
+	if got, err := s.inspectStatus(); err == nil || got.FullyLocked {
+		t.Fatal("claimed a fully locked vault while its helper lock was held")
 	}
 }
 

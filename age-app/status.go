@@ -16,8 +16,6 @@ import (
 
 const statusTimeout = 2 * time.Second
 
-var errStaleSocket = errors.New("helper socket is present but no helper is listening")
-
 type clientStatus struct {
 	Configured    bool     `json:"configured"`
 	HelperRunning bool     `json:"helper_running"`
@@ -93,8 +91,8 @@ func (s *service) inspectGeneration(v *clientStatus) {
 	v.Configured = good
 }
 
-// If the socket was removed while the daemon still owns its lock, the
-// session state is unknown. Probe the lock without creating or reading it.
+// An unreachable socket can outlive its helper. Probe the lock without
+// creating or reading it before reporting that no session is running.
 func (s *service) stoppedHelper() error {
 	path := filepath.Join(s.state, "daemon.lock")
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
@@ -110,17 +108,14 @@ func (s *service) stoppedHelper() error {
 		return errors.New("unsafe helper lock")
 	}
 	if unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB) != nil {
-		return errors.New("helper lock is held or unavailable while its socket is missing")
+		return errors.New("helper lock is held or unavailable while its socket is unreachable")
 	}
 	return nil
 }
 
 func (s *service) runningConnection(deadline time.Time) (*net.UnixConn, error) {
 	conn, err := s.connect(deadline)
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return nil, errStaleSocket
-	}
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED) {
 		return nil, s.stoppedHelper()
 	}
 	if err != nil {
@@ -153,9 +148,6 @@ func (s *service) endSession(op string) error {
 		return err
 	}
 	conn, err := s.runningConnection(time.Now().Add(statusTimeout))
-	if errors.Is(err, errStaleSocket) {
-		err = s.stoppedHelper()
-	}
 	if err != nil {
 		return err
 	}
