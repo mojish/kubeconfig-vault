@@ -41,6 +41,8 @@ Freelens can share the same session when it reads the linked file. If it uses an
 
 Switch contexts and namespaces with the usual `kubectl config use-context NAME` and `kubectl config set-context --current --namespace NAME`. To change a token, server address, certificate or user mapping, edit the encrypted source through the helper.
 
+Saving keeps the client's selected context and namespaces when the edit leaves those choices alone. If you remove the context currently selected in your client, the client switches to the saved source's `current-context`. An explicit selection in your edit takes precedence.
+
 ```sh
 kubeconfig-vault edit
 ```

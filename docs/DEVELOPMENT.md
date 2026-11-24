@@ -4,6 +4,8 @@ Most users can [install the published binary](../README.md#install-and-set-up). 
 
 ## Build locally
 
+To measure how edit saves reconcile context and namespace choices, run `go test -run '^$' -bench BenchmarkPreserveSelections -benchmem` in `age-app/` after building the browser assets. The benchmark covers 10, 100 and 1,000 disposable contexts.
+
 Use Go 1.26.11 or newer and Node.js 22.12 or newer. Build the browser assets first because the Go executable embeds them. From the repository root:
 
 ```sh

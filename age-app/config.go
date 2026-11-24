@@ -239,13 +239,13 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 	if len(c.Clusters) == 0 || len(c.Users) == 0 || len(c.Contexts) == 0 {
 		return nil, errors.New("clusters, credential users, and contexts are required")
 	}
-	clusters, users, contexts := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	clusterBindings := make(map[string]string, len(c.Clusters))
+	users, contexts := map[string]bool{}, map[string]bool{}
 	for i := range c.Clusters {
 		n := &c.Clusters[i]
-		if n.Name == "" || clusters[n.Name] {
+		if _, exists := clusterBindings[n.Name]; n.Name == "" || exists {
 			return nil, errors.New("duplicate or empty cluster name")
 		}
-		clusters[n.Name] = true
 		v := &n.Cluster
 		u, e := url.Parse(v.Server)
 		if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -288,6 +288,7 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 			}
 			v.CA = base64.StdEncoding.EncodeToString(public)
 		}
+		clusterBindings[n.Name] = binding(*v)
 	}
 	// YAML aliases can repeat large credentials. A portable kubeconfig writes
 	// each value in full, so reject oversized inputs before parsing TLS pairs.
@@ -333,16 +334,13 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 		p.Records[n.Name] = credential
 	}
 	for _, n := range c.Contexts {
-		if n.Name == "" || contexts[n.Name] || !clusters[n.Context.Cluster] || !users[n.Context.User] {
+		digest, exists := clusterBindings[n.Context.Cluster]
+		if n.Name == "" || contexts[n.Name] || !exists || !users[n.Context.User] {
 			return nil, errors.New("duplicate context or invalid cluster/user reference")
 		}
 		contexts[n.Name] = true
 		r := p.Records[n.Context.User]
-		for _, c := range c.Clusters {
-			if c.Name == n.Context.Cluster {
-				r.Bindings = append(r.Bindings, binding(c.Cluster))
-			}
-		}
+		r.Bindings = append(r.Bindings, digest)
 		p.Records[n.Context.User] = r
 	}
 	if c.Current != "" && !contexts[c.Current] {
@@ -368,25 +366,28 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 	return p, nil
 }
 func preserveSelections(old, next *payload, observed config) {
-	before, _ := parseConfig([]byte(old.Source))
-	after, _ := parseConfig([]byte(next.Source))
-	if before.Current == after.Current {
+	// Portable preserves the source's selections. Only Projection is modified
+	// with the choices made by a running client.
+	keepCurrent := old.Portable.Current == next.Portable.Current
+	if keepCurrent && observed.Current == "" {
 		next.Projection.Current = ""
-		for _, n := range next.Projection.Contexts {
-			if n.Name == observed.Current {
-				next.Projection.Current = observed.Current
-			}
-		}
+	}
+	before := make(map[string]string, len(old.Portable.Contexts))
+	for _, entry := range old.Portable.Contexts {
+		before[entry.Name] = entry.Context.Namespace
+	}
+	selected := make(map[string]string, len(observed.Contexts))
+	for _, entry := range observed.Contexts {
+		selected[entry.Name] = entry.Context.Namespace
 	}
 	for i := range next.Projection.Contexts {
 		n := &next.Projection.Contexts[i]
-		for _, original := range before.Contexts {
-			if original.Name == n.Name && original.Context.Namespace == n.Context.Namespace {
-				for _, selected := range observed.Contexts {
-					if selected.Name == n.Name {
-						n.Context.Namespace = selected.Context.Namespace
-					}
-				}
+		if keepCurrent && n.Name == observed.Current {
+			next.Projection.Current = observed.Current
+		}
+		if original, exists := before[n.Name]; exists && original == n.Context.Namespace {
+			if namespace, exists := selected[n.Name]; exists {
+				n.Context.Namespace = namespace
 			}
 		}
 	}
