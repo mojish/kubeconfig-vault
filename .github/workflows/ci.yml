@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       session_trial:
-        description: Run the full-hour session trial on one platform
+        description: Platforms to exercise for a full hour
         type: choice
         default: ordinary
-        options: [ordinary, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        options: [ordinary, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, all-platforms]
       freelens_desktop:
         description: Exercise the actual Freelens desktop on each native runner
         type: boolean
@@ -31,7 +31,7 @@ jobs:
   test:
     name: Native tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.os == inputs.session_trial && 90 || 20 }}
+    timeout-minutes: ${{ (matrix.os == inputs.session_trial || inputs.session_trial == 'all-platforms') && 90 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -167,7 +167,7 @@ jobs:
           printf 'KUBE_UNLOCK_TEST_BINARY=%s\n' "$binary" >> "$GITHUB_ENV"
       - name: Test synthetic browser and kubectl integration
         env:
-          FULL_HOUR: ${{ matrix.os == inputs.session_trial }}
+          FULL_HOUR: ${{ matrix.os == inputs.session_trial || inputs.session_trial == 'all-platforms' }}
         run: |
           command=(npm run test:browser)
           if [[ "$FULL_HOUR" == true ]]; then command+=(-- --one-hour-session); fi

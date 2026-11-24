@@ -23,7 +23,8 @@ function findInView(label, click, subframe) {
   return [box.x + box.width / 2, box.y + box.height / 2];
 }
 
-export async function displayNamespace({binary, root, kubeconfig, context, namespace, received, signal}) {
+export async function displayNamespace({binary, root, kubeconfig, context, namespace, received,
+  afterFirstView, signal}) {
   const home = join(root, "desktop-home");
   const profile = join(home, "profile");
   const config = join(home, ".kube", "config");
@@ -68,13 +69,14 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
   let targetId, sessionId, stage = "opening the desktop";
   const clicked = new Map();
   try {
-    const deadline = Date.now() + 85_000;
+    let deadline = Date.now() + 85_000;
     while (Date.now() < deadline && !exited) {
       signal.throwIfAborted();
       await delay(250);
       const {targetInfos} = await call("Target.getTargets");
       const target = targetInfos.find(t => t.type === "page" && !t.url.startsWith("devtools:"));
       if (!target) continue;
+      let displayed = false;
       try {
         if (target.targetId !== targetId) {
           ({sessionId} = await call("Target.attachToTarget", {targetId:target.targetId,flatten:true}));
@@ -90,7 +92,10 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
           const find = (label, click = false) => evaluate(
             `(${findInView})(${JSON.stringify(label)},${click},${Boolean(frame)})`);
           if (received() && await evaluate(
-            `(document.body?.innerText || "").split("\\n").some(line => line.trim() === ${JSON.stringify(namespace)})`)) return;
+            `(document.body?.innerText || "").split("\\n").some(line => line.trim() === ${JSON.stringify(namespace)})`)) {
+            displayed = true;
+            break;
+          }
           for (const label of ["Browse Clusters in Catalog", context, "Namespaces"]) {
             if ((clicked.get(label) || 0) > Date.now() - 3000 || !await find(label)) continue;
             const action = await find(label, true);
@@ -109,6 +114,19 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
         // Chromium replaces execution contexts and targets during navigation.
         if (error.code !== -32000 && error.code !== -32001) throw error;
         if (error.code === -32001) targetId = undefined;
+      }
+      if (displayed) {
+        if (!afterFirstView) return;
+        // Keep the same process open while the caller verifies renewal. A fresh
+        // view must display an API response different from the initial one.
+        const next = await afterFirstView();
+        afterFirstView = undefined;
+        namespace = next.namespace;
+        received = next.received;
+        await call("Page.reload", {ignoreCache:true}, sessionId);
+        clicked.clear();
+        stage = "reloading the open desktop";
+        deadline = Date.now() + 85_000;
       }
     }
     throw new Error("Freelens did not render the authenticated namespace; last stage was " + stage);
