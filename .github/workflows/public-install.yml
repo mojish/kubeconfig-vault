@@ -13,11 +13,51 @@ on:
         description: Observe browser download, Archive Utility and first launch on the hosted Macs
         type: boolean
         default: false
+      build_provenance:
+        description: Verify the six published files against the tagged release workflow
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  provenance:
+    name: Verify published build provenance
+    if: github.event_name == 'release' || inputs.build_provenance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Verify the installer, checksums and four archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Choose a release tag such as v0.5.1."
+            exit 1
+          fi
+          commit=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+          if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::GitHub did not return a source commit for the selected tag."
+            exit 1
+          fi
+          out=$(mktemp -d)
+          gh release download "$TAG" --repo "$GH_REPO" --dir "$out"
+          for file in install.sh SHA256SUMS kubeconfig-vault-{linux,darwin}-{amd64,arm64}.tar.gz; do
+            gh attestation verify "$out/$file" --repo "$GH_REPO" \
+              --source-ref "refs/tags/$TAG" --source-digest "$commit" \
+              --signer-workflow "$GH_REPO/.github/workflows/release.yml" \
+              --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners
+            printf 'Verified build provenance for %s at %s (%s).\n' "$file" "$TAG" "$commit"
+          done
+
   install:
     name: Public install (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}

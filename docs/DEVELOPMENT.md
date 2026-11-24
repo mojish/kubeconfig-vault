@@ -93,4 +93,16 @@ For a real release, pushing a `vMAJOR.MINOR.PATCH` tag starts the release workfl
 
 On publication, four native runners download the installer and their matching archive anonymously. Each verifies release provenance, installs in a temporary home, and checks the binary bytes, version, and compatibility link. The check tries the immutable tag first and the README’s latest URL while that tag is current. For tagged installers from v0.3.1 onward, use the workflow’s manual tag input to repeat the check. A hosted macOS install does not exercise Finder quarantine or first launch on a user's Mac. [Public installation workflow](../.github/workflows/public-install.yml)
 
-To verify a downloaded archive against its build attestation, run `gh attestation verify kubeconfig-vault-linux-amd64.tar.gz --repo mojish/kubeconfig-vault`. To install downloaded assets offline, place the matching archive and `SHA256SUMS` in one directory and run `sh install.sh --from-dir DIRECTORY` using the published installer.
+On a new publication, a separate Linux job checks the build provenance of the four archives, installer and checksum manifest. It requires a GitHub-hosted runner, this repository’s release workflow and the source commit for the release tag. For an existing attested release, select **Verify the six published files against the tagged release workflow** when starting the public installation workflow manually.
+
+To verify one archive yourself, set `tag` to the version you downloaded and choose the matching filename:
+
+```sh
+repo=mojish/kubeconfig-vault
+tag=v0.5.1
+gh attestation verify kubeconfig-vault-linux-amd64.tar.gz --repo "$repo" \
+  --source-ref "refs/tags/$tag" --signer-workflow "$repo/.github/workflows/release.yml" \
+  --predicate-type https://slsa.dev/provenance/v1 --deny-self-hosted-runners
+```
+
+If you reviewed a specific commit, add `--source-digest FULL_COMMIT_SHA`. This verifies how the file was built. The [signed-download checks](README.md#install-from-downloaded-files) verify its inclusion in the published release and explain offline installation. [GitHub CLI verification options](https://cli.github.com/manual/gh_attestation_verify)
