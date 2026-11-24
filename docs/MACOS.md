@@ -42,16 +42,16 @@ The shell installer and a download opened in Finder take different paths through
 
 ## Test kubectl and Freelens
 
-Run the script from the **same tag** as the binary. A checkout contains it at `age-app/physical.test.mjs`. Alternatively, from the Downloads folder:
+On the same GitHub release page, download **Source code (tar.gz)** and expand it in Downloads. The test script uses helper modules from that source tree. Keep the same Terminal window so `KUBE_UNLOCK_TEST_BINARY` still points to the downloaded executable. A checkout of the matching tag also works. The token trial needs no Go build or npm installation.
 
 ```sh
 tag=$("$KUBE_UNLOCK_TEST_BINARY" --version | awk '$1 == "kubeconfig-vault" { print $2 }')
-curl -fL "https://raw.githubusercontent.com/mojish/kubeconfig-vault/$tag/age-app/physical.test.mjs" -o physical.test.mjs &&
-  node physical.test.mjs --preflight-only &&
-  node physical.test.mjs --macos-freelens
+cd "$HOME/Downloads/kubeconfig-vault-${tag#v}" &&
+  node age-app/physical.test.mjs --preflight-only &&
+  node age-app/physical.test.mjs --macos-freelens
 ```
 
-For a certificate trial, use a checkout containing the [certificate fixture](../age-app/test-support/client-certificate.mjs) and install Go. From the checkout root, run `node age-app/physical.test.mjs --preflight-only --client-certificate`, then `node age-app/physical.test.mjs --macos-freelens --client-certificate`. The single-file download above is sufficient for the token trial.
+For a certificate trial, install Go for the [certificate fixture](../age-app/test-support/client-certificate.mjs). From the same source directory, run `node age-app/physical.test.mjs --preflight-only --client-certificate`, then `node age-app/physical.test.mjs --macos-freelens --client-certificate`.
 
 Preflight checks the binary and uses kubectl against the test API. The desktop test then prints `WAIT` prompts. If Freelens is outside `/Applications/Freelens.app`, first set `KUBE_UNLOCK_TEST_FREELENS` to the executable inside its app bundle.
 
