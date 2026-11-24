@@ -51,6 +51,6 @@ Keep the encrypted backup and the recovery key in separate safe places. Run `kub
 
 ## Compatibility
 
-The public v0.5.0 installer passed on Linux and macOS, on both x86-64 and ARM64. On all four platforms, real kubectl and Freelens clients shared an unlock in automated tests with a virtual security key. The available physical USB YubiKey result covers bearer tokens on Linux x86-64. Mac binaries are unnotarized. If your Mac blocks the executable, you can [build from source](docs/DEVELOPMENT.md#build-locally). Physical Mac YubiKey testing and independent security review are still open. The project is experimental.
+The public v0.5.1 installer passed on Linux and macOS, on both x86-64 and ARM64. On all four platforms, real kubectl and Freelens clients shared an unlock in automated tests with a virtual security key. The available physical USB YubiKey result covers bearer tokens on Linux x86-64. Mac binaries are unnotarized. If your Mac blocks the executable, you can [build from source](docs/DEVELOPMENT.md#build-locally). Physical Mac YubiKey testing and independent security review are still open. The project is experimental.
 
 [Tested platforms and open trials](docs/COMPATIBILITY.md) · [Compare credential workflows](docs/ALTERNATIVES.md) · [Where the keys and credentials live](docs/ARCHITECTURE.md) · [CLI reference](docs/INTERFACE.md) · [Build and test](docs/DEVELOPMENT.md) · [Report a security issue](SECURITY.md)
