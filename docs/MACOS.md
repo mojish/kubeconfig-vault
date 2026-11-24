@@ -1,10 +1,12 @@
 # Verify a release on a Mac
 
-This is a volunteer test for a **physical USB YubiKey and the Freelens desktop app**. It answers two questions the hosted tests cannot settle. Will Gatekeeper allow the downloaded binary to run on first launch? Can the desktop app unlock the vault, read a namespace, and reconnect after locking?
+This is a volunteer test for a **physical USB YubiKey and the Freelens desktop app**. It checks how a browser download behaves on your Mac, then verifies that Freelens can unlock, read a namespace and reconnect using your physical key. Hosted Mac runners have exercised the desktop with a virtual authenticator. [Current evidence](COMPATIBILITY.md)
 
 Use a fresh macOS account, leave the YubiKey plugged in, and set Chrome as the default browser. Install Freelens, kubectl, OpenSSL and Node.js 22.12 or later. Quit Freelens with Command-Q before starting. The script creates a temporary kubeconfig, recovery key, Freelens profile and local test API. Keep personal clusters and synced browser accounts out of the test account.
 
 ## Check the download and first launch
+
+To collect a hosted comparison, run the **Verify public installation** workflow, enter a published tag, and select the macOS download option. It downloads through Chrome, verifies the release asset, expands it with Archive Utility and records quarantine before the first command-line launch. The log also reports Gatekeeper's state on that runner. Record your Mac's result separately. [Apple's guide to opening downloaded apps](https://support.apple.com/en-us/102445)
 
 1. In Chrome, download `SHA256SUMS` and the macOS archive from the **same release** into an empty Downloads folder. Choose `darwin-arm64` for Apple Silicon or `darwin-amd64` for Intel. On Apple Silicon, use a native Terminal for the commands below. A Terminal running under Rosetta reports the Intel architecture. Keep the downloaded archive. [GitHub releases](https://github.com/mojish/kubeconfig-vault/releases)
 2. Verify the checksum in Terminal. Continue when the selected archive reports `OK`.
@@ -40,16 +42,16 @@ The shell installer and a download opened in Finder take different paths through
 
 ## Test kubectl and Freelens
 
-Run the script from the **same tag** as the binary. A checkout contains it at `age-app/physical.test.mjs`. Alternatively, from the Downloads folder:
+On the same GitHub release page, download **Source code (tar.gz)** and expand it in Downloads. The test script uses helper modules from that source tree. Keep the same Terminal window so `KUBE_UNLOCK_TEST_BINARY` still points to the downloaded executable. A checkout of the matching tag also works. The token trial needs no Go build or npm installation.
 
 ```sh
 tag=$("$KUBE_UNLOCK_TEST_BINARY" --version | awk '$1 == "kubeconfig-vault" { print $2 }')
-curl -fL "https://raw.githubusercontent.com/mojish/kubeconfig-vault/$tag/age-app/physical.test.mjs" -o physical.test.mjs &&
-  node physical.test.mjs --preflight-only &&
-  node physical.test.mjs --macos-freelens
+cd "$HOME/Downloads/kubeconfig-vault-${tag#v}" &&
+  node age-app/physical.test.mjs --preflight-only &&
+  node age-app/physical.test.mjs --macos-freelens
 ```
 
-For a certificate trial, use a checkout containing the [certificate fixture](../age-app/test-support/client-certificate.mjs) and install Go. From the checkout root, run `node age-app/physical.test.mjs --preflight-only --client-certificate`, then `node age-app/physical.test.mjs --macos-freelens --client-certificate`. The single-file download above is sufficient for the token trial.
+For a certificate trial, install Go for the [certificate fixture](../age-app/test-support/client-certificate.mjs). From the same source directory, run `node age-app/physical.test.mjs --preflight-only --client-certificate`, then `node age-app/physical.test.mjs --macos-freelens --client-certificate`.
 
 Preflight checks the binary and uses kubectl against the test API. The desktop test then prints `WAIT` prompts. If Freelens is outside `/Applications/Freelens.app`, first set `KUBE_UNLOCK_TEST_FREELENS` to the executable inside its app bundle.
 
