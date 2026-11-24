@@ -416,8 +416,20 @@ try {
   assert.equal(edit, JSON.parse(await cli("status")).edit_path);
   assert.equal(await readFile(edit,"utf8"),original);
   const locked=JSON.parse(await cli("lock"));assert.equal(locked.fully_locked,false);assert.equal(locked.edit_open,true);
-  await writeFile(edit,"not: [valid",{mode:0o600});
-  assert.notEqual((await complete(launch(["config","lock"]))).code,0);
+  const pagesBeforeBadEdit = (await urls()).length;
+  const badEdit = "not: [SYNTHETIC-INVALID-EDIT";
+  await writeFile(edit,badEdit,{mode:0o600});
+  const rejectingSave = launch(["config","lock"]);
+  await waitFor(async () => {
+    assert.equal((await urls()).length,pagesBeforeBadEdit);
+    return rejectingSave.done;
+  },"invalid edit rejected without an approval");
+  const badSave = await rejectingSave.promise;
+  assert.notEqual(badSave.code,0);
+  assert.match(badSave.stderr,/plaintext edit preserved/);
+  assert.ok(!(badSave.stdout+badSave.stderr).includes("SYNTHETIC-INVALID-EDIT"));
+  assert.equal((await urls()).length,pagesBeforeBadEdit);
+  assert.equal(await readFile(edit,"utf8"),badEdit);
   assert.deepEqual(await readFile(join(state,"current","vault.age")),initialGeneration);assert.ok(await stat(edit));
   sourceObject.users[0].user.token=tokenB;await writeFile(edit,JSON.stringify(sourceObject,null,2),{mode:0o600});
   await successful(launch(["config","lock"]));acceptedToken=tokenB;
