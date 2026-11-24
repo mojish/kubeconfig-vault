@@ -1,5 +1,8 @@
 // Provide only the discovery and resources the volunteer needs to see one namespace.
 export function dummyAPI(method, path, namespace = "vault-test") {
+  if (method === "GET" && (path === "/api/v1/pods" || /^\/api\/v1\/namespaces\/[^/]+\/pods$/.test(path))) {
+    return { apiVersion: "v1", kind: "PodList", metadata: { resourceVersion: "1" }, items: [] };
+  }
   switch (method + " " + path) {
   case "GET /version":
     return { major: "1", minor: "32", gitVersion: "v1.32.0" };
@@ -10,7 +13,8 @@ export function dummyAPI(method, path, namespace = "vault-test") {
   case "GET /api/v1":
     return { apiVersion: "v1", kind: "APIResourceList", groupVersion: "v1",
       resources: [{ name: "namespaces", singularName: "namespace", kind: "Namespace", namespaced: false, verbs: ["get", "list"] },
-        { name: "nodes", singularName: "node", kind: "Node", namespaced: false, verbs: ["get", "list"] }] };
+        { name: "nodes", singularName: "node", kind: "Node", namespaced: false, verbs: ["get", "list"] },
+        { name: "pods", singularName: "pod", kind: "Pod", namespaced: true, verbs: ["list"] }] };
   case "GET /api/v1/namespaces":
     return { apiVersion: "v1", kind: "NamespaceList", metadata: { resourceVersion: "1" },
       items: [{ apiVersion: "v1", kind: "Namespace", metadata: { name: namespace, uid: namespace, resourceVersion: "1" },
