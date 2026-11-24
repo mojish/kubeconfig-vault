@@ -22,3 +22,19 @@ test("captured commands finish after draining both pipes", async () => {
   assert.equal(result.stdout, "visible prompt done");
   assert.equal(result.stderr, "late diagnostic");
 });
+
+test("long-running children keep only the requested tail of each stream", async () => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  const operation = captureProcess(child, 4);
+  child.stdout.write("older");
+  child.stderr.write("older");
+  child.emit("exit", 0, null);
+  child.stdout.end("done");
+  child.stderr.end("ok");
+  child.emit("close", 0, null);
+  const result = await operation.promise;
+  assert.equal(result.stdout, "done");
+  assert.equal(result.stderr, "erok");
+});
