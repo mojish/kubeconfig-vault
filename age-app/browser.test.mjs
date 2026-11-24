@@ -655,6 +655,7 @@ try {
   console.log("PASS: closing an unchanged edit requires only its opening page and preserves the generation.");
   // Use the restored vault to exercise mixed auth without changing the original fixture.
   const keyMarker = clientKey.toString().split("\n")[1];
+  const mixedBackup = join(root, "mixed.age");
   {
     await successful(launch(["config","unlock"]));
     const mixedEdit = (await cli("path","edit")).trim();
@@ -709,10 +710,11 @@ try {
           : "PASS: Freelens rendered a certificate-authenticated namespace using kubectl's original session and deadline.");
       }
     }
-    const certBackup = join(root,"mixed.age"), certRecovery = join(root,"mixed-recovered");
-    await cli("backup",certBackup);
-    await cli("recover",certBackup,"--key",recovery,"--out",certRecovery);
+    const certRecovery = join(root,"mixed-recovered");
+    await cli("backup",mixedBackup);
+    await cli("recover",mixedBackup,"--key",recovery,"--out",certRecovery);
     assert.equal(JSON.parse((await kube("cert",certRecovery).promise).stdout).gitVersion,"v1.32.1");
+    await rm(certRecovery);
     const browserRequests = JSON.stringify(events.filter(e=>e.method==="Network.requestWillBeSent").map(e=>e.params.request));
     for (const visible of [projection,browserRequests,daemonLog]) {
       assert.ok(!visible.includes(keyMarker) && !visible.includes(clientKey.toString("base64")),"client key escaped native credential handling");
@@ -720,6 +722,7 @@ try {
     console.log("PASS: real kubectl used a token and an embedded client certificate in one vault; mutual TLS worked after offline recovery.");
   }
   await cli("stop");
+  await rename(state, join(root, "mixed-state-offline"));
   // Provision another disposable vault without a controlling terminal.
   state = join(root, "file-key-state");
   const fileKeySource = join(root, "file-key-source");
@@ -741,6 +744,30 @@ try {
   await cli("stop");
   console.log("PASS: setup used an existing offline key with browser approval; the same key decrypted the backup.");
   await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:replacementKey.authenticatorId});
+  // Restore both credential types when the old helper, plaintext export and
+  // enrolled authenticator are unavailable. The backup also holds an expired JWT.
+  state = join(root, "mixed-replacement");
+  const lastKey = await call("WebAuthn.addVirtualAuthenticator", {options:virtualKeyOptions});
+  try {
+    await successful(launch(["restore", mixedBackup, "--key", recovery]));
+    const client = join(state, "current", "kubeconfig");
+    const before = (await urls()).length;
+    const cert = kube("cert", client), token = kube("synthetic", client);
+    assert.equal(JSON.parse((await successful(cert)).stdout).gitVersion, "v1.32.1");
+    const tokenResult = await token.promise;
+    assert.equal(tokenResult.code, 0);
+    assert.equal(JSON.parse(tokenResult.stdout).gitVersion, "v1.32.0");
+    const requests = tokenRequests;
+    const expired = await kube("expired", client).promise;
+    assert.notEqual(expired.code, 0);
+    assert.match(expired.stderr, /Kubernetes token has expired/);
+    assert.equal(tokenRequests, requests);
+    assert.equal((await urls()).length, before + 1);
+  } finally {
+    await cli("stop");
+    await call("WebAuthn.removeVirtualAuthenticator", {authenticatorId:lastKey.authenticatorId});
+  }
+  console.log("PASS: after losing the enrolled key, a restored backup served mutual TLS and a valid token with one approval and rejected its expired token locally.");
   await rename(offlineState,oldState);
   state=oldState;
   const recovered = join(root, "recovered");
