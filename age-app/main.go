@@ -248,7 +248,7 @@ func runRecover(args []string) error {
 			check = true
 		case "--key", "--out":
 			i++
-			if i == len(args) || args[i] == "" {
+			if i == len(args) || args[i] == "" || strings.HasPrefix(args[i], "--") {
 				return errors.New(usage)
 			}
 			if option == "--key" && key == "" {

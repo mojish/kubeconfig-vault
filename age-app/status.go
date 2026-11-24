@@ -16,6 +16,8 @@ import (
 
 const statusTimeout = 2 * time.Second
 
+var errStaleSocket = errors.New("helper socket is present but no helper is listening")
+
 type clientStatus struct {
 	Configured    bool     `json:"configured"`
 	HelperRunning bool     `json:"helper_running"`
@@ -123,7 +125,7 @@ func (s *service) runningConnection(deadline time.Time) (*net.UnixConn, error) {
 	}
 	conn, err := s.connect(deadline)
 	if errors.Is(err, syscall.ECONNREFUSED) {
-		return nil, errors.New("helper socket is present but no helper is listening")
+		return nil, errStaleSocket
 	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, s.stoppedHelper()
@@ -158,6 +160,9 @@ func (s *service) endSession(op string) error {
 		return err
 	}
 	conn, err := s.runningConnection(time.Now().Add(statusTimeout))
+	if errors.Is(err, errStaleSocket) {
+		err = s.stoppedHelper()
+	}
 	if err != nil {
 		return err
 	}

@@ -181,24 +181,29 @@ func currentID(state string) (string, error) {
 	return strings.TrimPrefix(target, "generations/"), nil
 }
 
-func loadSnapshot(state string) (*snapshot, error) {
+func activeGeneration(state string) (string, error) {
 	id, err := currentID(state)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if id == "" {
-		return nil, errors.New("no age vault imported")
+		return "", errors.New("no age vault imported")
+	}
+	return id, nil
+}
+
+func loadSnapshot(state string) (*snapshot, error) {
+	id, err := activeGeneration(state)
+	if err != nil {
+		return nil, err
 	}
 	return loadGeneration(state, id)
 }
 
 func backupGeneration(state, out string) error {
-	id, err := currentID(state)
+	id, err := activeGeneration(state)
 	if err != nil {
 		return err
-	}
-	if id == "" {
-		return errors.New("no age vault imported")
 	}
 	// Resolve current once. A concurrent save publishes another directory,
 	// while an opened file remains readable even if its generation is pruned.
@@ -223,14 +228,19 @@ func loadGeneration(state, id string) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = age.ParseHybridRecipient(s.Meta.Recovery); err != nil {
-		return nil, errors.New("invalid recovery recipient")
-	}
-	s.Cipher, err = readBounded(filepath.Join(state, "generations", id, "vault.age"), maxVault, true)
-	if err != nil {
+	if err := s.readCipher(state); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *snapshot) readCipher(state string) error {
+	if _, err := age.ParseHybridRecipient(s.Meta.Recovery); err != nil {
+		return errors.New("invalid recovery recipient")
+	}
+	var err error
+	s.Cipher, err = readBounded(filepath.Join(state, "generations", s.ID, "vault.age"), maxVault, true)
+	return err
 }
 
 func loadMetadata(dir, id string) (*snapshot, error) {

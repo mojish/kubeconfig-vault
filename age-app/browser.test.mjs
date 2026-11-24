@@ -285,10 +285,10 @@ try {
   const afterStale = JSON.parse(await cli("status"));
   assert.equal(afterStale.unlocked, false);
   assert.equal(afterStale.automatic_unlock_paused_until, undefined);
-  console.log("PASS: a stale kubectl config failed before opening the browser; the next approved client could unlock normally.");
   const before=(await urls()).length,first=kube(),second=kube("second");
   assert.equal(JSON.parse((await successful(first)).stdout).gitVersion,"v1.32.0");assert.equal((await second.promise).code,0);
   assert.equal((await urls()).length,before+1);
+  console.log("PASS: a stale kubectl config failed before opening the browser; the next approved client unlocked normally.");
   if (previous) console.log("PASS: upgraded an existing vault after kubectl rewrote the previous version's linked config.");
   kubectlConfig("set-context", "--current", "--namespace", "vault-test");
   const warm=kube();assert.equal((await warm.promise).code,0);assert.equal((await urls()).length,before+1);

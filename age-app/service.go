@@ -626,17 +626,26 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 	s.expireLocked()
 	cached, retryAfter := s.cache, s.retryAfter
 	s.mu.Unlock()
-	requestedBinding := binding(*r.Cluster)
 	if cached == nil {
 		if err := automaticPause(time.Now(), retryAfter); err != nil {
 			return nil, err
 		}
-		current, err := loadSnapshot(s.state)
+	}
+	requestedBinding := binding(*r.Cluster)
+	if cached == nil {
+		id, err := activeGeneration(s.state)
+		if err != nil {
+			return nil, err
+		}
+		current, err := loadGenerationSettings(s.state, id)
 		if err != nil {
 			return nil, err
 		}
 		if !current.Projection.referencesCredential(r.ID, *r.Cluster) {
 			return nil, errCredentialBinding
+		}
+		if err := current.readCipher(s.state); err != nil {
+			return nil, err
 		}
 		p, err := s.authenticateSnapshot(ctx, "A Kubernetes client requested vault access", current)
 		if err != nil {

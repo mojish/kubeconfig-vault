@@ -10,6 +10,7 @@ import (
 
 func TestRecoverFlagOrder(t *testing.T) {
 	dir := privateTemp(t)
+	t.Chdir(dir)
 	p, key := samplePayload(t)
 	cipher, err := encryptPayload(p, key.Recipient())
 	if err != nil {
@@ -35,10 +36,15 @@ func TestRecoverFlagOrder(t *testing.T) {
 		{"--out", ""}, {"--key", "", "--check"}, {"--key", identity},
 		{"--check", "--out", "another"}, {"--out", "first", "--out", "second"},
 		{"--check", "--check"}, {"--check", "--unknown"},
+		{"--out", "--check", "--key", identity}, {"--key", "--out", "--check"},
 	} {
 		if err := runRecover(append([]string{vault}, args...)); err == nil || !strings.HasPrefix(err.Error(), "usage:") {
 			t.Errorf("expected usage error for %v", args)
 		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 4 {
+		t.Fatal("malformed recovery options produced an extra file", err)
 	}
 }
 
