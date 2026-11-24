@@ -121,6 +121,15 @@ func (s *service) clientLink(action string, args []string) error {
 	if err != nil {
 		return err
 	}
+	if action == "unlink" {
+		completed, err := existsEntry(s.receipt(entry) + ".restored")
+		if err != nil {
+			return err
+		}
+		if completed {
+			return s.clientAction(request{Op: "undo-setup", Path: path})
+		}
+	}
 	record, noOriginal, err := s.linkReceipt(entry)
 	if err != nil {
 		return err
@@ -134,9 +143,6 @@ func (s *service) clientLink(action string, args []string) error {
 	if action == "unlink" && sealed {
 		if !record {
 			return errors.New("encrypted rollback has no receipt; client and backup preserved")
-		}
-		if !s.isLinked(entry) {
-			return errors.New("file is not linked to this vault; encrypted backup preserved")
 		}
 		return s.clientAction(request{Op: "undo-setup", Path: path})
 	}
@@ -216,6 +222,9 @@ func (s *service) unlinkWithoutCipher(entry string, noOriginal bool) error {
 	}
 	if !noOriginal {
 		if !legacy {
+			if !s.isLinked(entry) {
+				return errors.New("client is not linked to this vault and has no rollback receipt or backup")
+			}
 			return errors.New("original backup and receipt are both missing; locate the original or inspect the managed link before detaching it")
 		}
 		if !s.isLinked(entry) {

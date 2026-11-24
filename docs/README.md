@@ -98,4 +98,8 @@ kubeconfig-vault config unlink
 
 Approve with your YubiKey. For a client that had an original file, the helper restores its exact pre-setup bytes as a private **plaintext** kubeconfig. For a client linked at a previously empty path, it removes the managed link. If you selected a custom file, pass `--kubeconfig FILE`. Keep the vault and its encrypted rollback together until unlink succeeds.
 
+If unlink stops after replacing the client, close your editor and retry. Vault asks for approval, compares the restored file with the encrypted original, and flushes the matching file to disk before deleting the rollback. If the file changed, both copies are preserved. If only the completion receipt remains, the retry removes it without another prompt. Unlink can also restore from an intact rollback if the generated client file is missing and the vault's security-key metadata is available.
+
+If a killed writer left a `.lock` file, follow the [client lock guidance](INTERFACE.md#setup-and-client-files) before retrying. An alias and its resolved target can each have a lock.
+
 [All commands and supported inputs](INTERFACE.md) · [Where keys and credentials live](ARCHITECTURE.md) · [Contributor guide](DEVELOPMENT.md)
