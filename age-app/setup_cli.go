@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func setupPath(args []string) (string, error) {
@@ -15,15 +16,77 @@ func setupPath(args []string) (string, error) {
 	if len(args) != 0 {
 		return "", errors.New("usage: setup [KUBECONFIG_FILE]")
 	}
-	paths := filepath.SplitList(os.Getenv("KUBECONFIG"))
-	switch len(paths) {
-	case 0:
+	list := os.Getenv("KUBECONFIG")
+	if list == "" {
 		return defaultKubeconfigPath()
-	case 1:
-		return absolute(paths[0])
-	default:
-		return "", errors.New("KUBECONFIG selects multiple files; run setup FILE with one kubeconfig")
 	}
+	var selected string
+	for _, p := range filepath.SplitList(list) {
+		if p == "" {
+			continue
+		}
+		path, err := absolute(p)
+		if err != nil {
+			return "", err
+		}
+		if selected != "" && selected != path {
+			return "", errors.New("KUBECONFIG selects multiple files; run setup FILE with one kubeconfig")
+		}
+		selected = path
+	}
+	if selected == "" {
+		return "", errors.New("KUBECONFIG contains no file paths; run setup FILE with one kubeconfig")
+	}
+	return selected, nil
+}
+
+func (s *service) setupCommand(args []string) error {
+	const usage = "usage: setup [FILE] [--check | --recovery-key KEYFILE]"
+	var file []string
+	var recovery string
+	var check bool
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; arg {
+		case "--check":
+			if check {
+				return errors.New(usage)
+			}
+			check = true
+		case "--recovery-key":
+			i++
+			if recovery != "" || i == len(args) || args[i] == "" || strings.HasPrefix(args[i], "--") {
+				return errors.New(usage)
+			}
+			recovery = args[i]
+		default:
+			if len(file) != 0 || arg == "" || strings.HasPrefix(arg, "--") {
+				return errors.New(usage)
+			}
+			file = []string{arg}
+		}
+	}
+	if check && recovery != "" {
+		return errors.New(usage)
+	}
+	path, err := setupPath(file)
+	if err != nil {
+		return err
+	}
+	if check {
+		entry, err := clientEntry(s.state, path)
+		if err != nil {
+			return err
+		}
+		if s.isLinked(entry) {
+			return errors.New("client already linked; use kubeconfig-vault status")
+		}
+		if err := s.validateInput(path, entry); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "Supported kubeconfig. No files changed.")
+		return nil
+	}
+	return s.startSetup(path, recovery)
 }
 
 func (s *service) validateInput(path, entry string) error {
@@ -36,7 +99,10 @@ func (s *service) validateInput(path, entry string) error {
 	return err
 }
 
-func (s *service) startSetup(path string) error {
+func (s *service) startSetup(path, recoveryFile string) error {
+	if err := checkPrivateDir(s.state); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	entry, err := clientEntry(s.state, path)
 	if err != nil {
 		return err
@@ -61,11 +127,21 @@ func (s *service) startSetup(path string) error {
 		if present, err := existsEntry(entry + sealedSuffix); err != nil || present {
 			return errors.New("encrypted rollback already exists; locate its vault before setup")
 		}
-		r.RecoveryIdentity, err = showNewRecoveryKey()
-		if err != nil {
-			return err
+		if recoveryFile == "" {
+			r.RecoveryIdentity, err = showNewRecoveryKey()
+			if err != nil {
+				return err
+			}
+		} else {
+			key, err := readRecovery(recoveryFile)
+			if err != nil {
+				return err
+			}
+			r.RecoveryIdentity = []byte(key.String())
 		}
 		defer clear(r.RecoveryIdentity)
+	} else if recoveryFile != "" {
+		return errors.New("this vault already has a recovery key; to resume setup, omit --recovery-key")
 	}
 	if err := s.clientAction(r); err != nil {
 		return err

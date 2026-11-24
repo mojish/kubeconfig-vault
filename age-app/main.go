@@ -384,23 +384,8 @@ func run(args []string) error {
 		return errors.New("cannot resolve application executable")
 	}
 	s := &service{state: *state, executable: installedCommand(executable), browser: *browser, ttl: time.Duration(*seconds) * time.Second, stop: make(chan struct{})}
-	if a[0] == "setup" && len(a) > 1 && a[1] == "--check" {
-		path, err := setupPath(a[2:])
-		if err != nil {
-			return err
-		}
-		entry, err := clientEntry(s.state, path)
-		if err != nil {
-			return err
-		}
-		if s.isLinked(entry) {
-			return errors.New("client already linked; use kubeconfig-vault status")
-		}
-		if err := s.validateInput(path, entry); err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stdout, "Supported kubeconfig. No files changed.")
-		return nil
+	if a[0] == "setup" {
+		return s.setupCommand(a[1:])
 	}
 	if err = privateDir(*state); err != nil {
 		return err
@@ -413,13 +398,6 @@ func run(args []string) error {
 	}
 	if a[0] == "history" {
 		return s.history(a[1:])
-	}
-	if a[0] == "setup" {
-		path, err := setupPath(a[1:])
-		if err != nil {
-			return err
-		}
-		return s.startSetup(path)
 	}
 	if a[0] == "restore" {
 		if len(a) != 2 && (len(a) != 4 || a[2] != "--key") {

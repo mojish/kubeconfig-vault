@@ -79,7 +79,9 @@ Close your kubeconfig editor, connect your security key, then run:
 
 Save the generated offline recovery key and complete the local browser steps.
 Setup selects ~/.kube/config or the single file named by KUBECONFIG.
-To validate a file without enrollment, run kubeconfig-vault setup --check FILE.`
+To validate a file without enrollment, run kubeconfig-vault setup --check FILE.
+If you already hold a private recovery key file, add --recovery-key KEYFILE
+when creating the vault. Browser approval with the security key is still required.`
 	case "edit", "config edit":
 		message = `kubeconfig-vault edit
 

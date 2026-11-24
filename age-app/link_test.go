@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,49 @@ func TestSetupPathMergeRequiresSelection(t *testing.T) {
 	}
 	if _, err := setupPath([]string{"a"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSetupPathIgnoresEmptyAndRepeatedEntries(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	want, err := filepath.Abs("config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Use the platform's canonical working directory for the absolute entry.
+	t.Setenv("KUBECONFIG", ":"+want+":config::")
+	if got, err := setupPath(nil); err != nil || got != want {
+		t.Fatalf("single repeated path: %s, %v", got, err)
+	}
+	t.Setenv("KUBECONFIG", "::")
+	if _, err := setupPath(nil); err == nil {
+		t.Fatal("empty entries must not implicitly select the home kubeconfig")
+	}
+}
+
+func TestSetupOptionsBeforeEnrollment(t *testing.T) {
+	dir := privateTemp(t)
+	s := service{state: filepath.Join(dir, "unused")}
+	source := filepath.Join(dir, "config")
+	if err := os.WriteFile(source, []byte(synthetic), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{source, "--check"}, {"--check", source}} {
+		if err := s.setupCommand(args); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{source, "--recovery-key"}, {source, "--recovery-key", "--check"},
+		{source, "--check", "--recovery-key", "unused"}, {source, "second"},
+	} {
+		if err := s.setupCommand(args); err == nil || !strings.HasPrefix(err.Error(), "usage:") {
+			t.Fatalf("expected usage error, got %v", err)
+		}
+	}
+	if _, err := os.Stat(s.state); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("input validation unexpectedly created state")
 	}
 }
 func TestLegacyUnlink(t *testing.T) {
