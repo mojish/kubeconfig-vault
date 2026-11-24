@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, macos-15-intel]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
     defaults:
       run:
         shell: bash
@@ -47,7 +47,7 @@ jobs:
           go-version-file: age-app/go.mod
           cache-dependency-path: age-app/go.sum
       - name: Validate workflow syntax and shell commands
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 ../.github/workflows/*.yml
           shellcheck ../install.sh ../scripts/*.sh
@@ -75,26 +75,16 @@ jobs:
         run: |
           go build -trimpath -o kubeconfig-vault .
           ./kubeconfig-vault --help
-      - name: Check Linux integration prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          google-chrome --version
-          kubectl version --client
-          openssl version
-      - name: Check macOS integration prerequisites
-        if: runner.os == 'macOS'
-        run: |
-          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-          command -v kubectl >/dev/null || brew install kubectl
+      - uses: ./.github/actions/browser-clients
       - name: Check out the v0.3.0 upgrade fixture
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-24.04'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: 346b9be287292ed4fb9d6d0385a3d828db26b137
           path: previous-release
           persist-credentials: false
       - name: Build the previous release for the kubectl upgrade test
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-24.04'
         working-directory: previous-release/age-app
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
@@ -104,5 +94,5 @@ jobs:
       - name: Test synthetic browser and kubectl integration
         run: npm run test:browser
       - name: Check dependency advisories
-        if: runner.os == 'Linux'
+        if: matrix.os == 'ubuntu-24.04'
         run: npm run audit:security

@@ -39,7 +39,7 @@ For an end-to-end run, install Go, Chrome, kubectl, OpenSSL, and Python 3.9+ and
 
 Set `KUBE_UNLOCK_TEST_BINARY` to test a packaged executable. `KUBE_UNLOCK_TEST_CHROME` and `KUBE_UNLOCK_TEST_KUBECTL` select specific client executables. On Linux the suite uses the installed Freelens proxy when available, otherwise `kubectl proxy`. `KUBE_UNLOCK_TEST_FREELENS_PROXY` overrides its location.
 
-Linux CI also runs `npm run audit:security`, which queries npm advisories and runs Go’s vulnerability checker. Native Go and browser tests run on Linux and both macOS architectures. [CI workflow](../.github/workflows/ci.yml)
+Pull requests and pushes to main run native Go and browser tests on both CPU architectures for Linux and macOS. You can dispatch the workflow manually for a branch. The Linux ARM64 runner installs stable Chrome through Google's signed APT repository. Linux x86-64 also tests the previous binary and runs `npm run audit:security`, which checks npm and Go advisories. [CI workflow](../.github/workflows/ci.yml)
 
 ## Test with a physical YubiKey
 
@@ -72,7 +72,7 @@ sh install.sh --from-dir "$scratch/assets" "$scratch/bin"
 "$scratch/bin/kubeconfig-vault" --version
 ```
 
-For a real release, pushing a `vMAJOR.MINOR.PATCH` tag starts the release workflow. It runs CI, builds the four archives, installs them on their target platforms, and checks the checksum manifest. Packaged browser integration runs on Linux x86-64 and both Mac targets. The workflow attests the artifacts and creates a draft. Review the tag, notes, and all six assets before publishing. [Release workflow](../.github/workflows/release.yml)
+For a real release, pushing a `vMAJOR.MINOR.PATCH` tag starts the release workflow. It runs CI, builds the four archives, installs each on its target platform, and checks the checksum manifest. Each installed CLI must pass the token and mutual-TLS preflights and the virtual-authenticator browser suite with real kubectl before the workflow attests the artifacts and creates a draft. Review the tag, notes, and all six assets before publishing. [Release workflow](../.github/workflows/release.yml)
 
 On publication, a separate job anonymously downloads the Linux x86-64 installer and archive, verifies their release provenance, installs in a temporary home, and checks the binary bytes, version, and compatibility link. It tries the immutable tag first and the README’s latest URL while that tag is current. For tagged installers from v0.3.1 onward, use the workflow’s manual tag input to repeat the check. [Public installation workflow](../.github/workflows/public-install.yml)
 
