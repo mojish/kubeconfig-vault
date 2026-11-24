@@ -569,9 +569,11 @@ try {
   state = join(root, "file-key-state");
   const fileKeySource = join(root, "file-key-source");
   await writeFile(fileKeySource, original, {mode: 0o600});
+  const pagesBeforeFileKey = (await urls()).length;
   const withKey = launch(["setup", fileKeySource, "--recovery-key", recovery], {detached: true});
   await successful(withKey);
-  assert.ok(!withKey.stdout.includes(savedKey));
+  assert.equal((await urls()).length, pagesBeforeFileKey + 1);
+  assert.ok(!(withKey.stdout + withKey.stderr).includes(savedKey));
   assert.equal(await readlink(fileKeySource), join(state, "current", "kubeconfig"));
   const fileKeyBackup = join(root, "file-key.age");
   await cli("backup", fileKeyBackup);

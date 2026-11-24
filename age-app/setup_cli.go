@@ -30,12 +30,12 @@ func setupPath(args []string) (string, error) {
 			return "", err
 		}
 		if selected != "" && selected != path {
-			return "", errors.New("KUBECONFIG selects multiple files; run setup FILE with one kubeconfig")
+			return "", errors.New("KUBECONFIG selects multiple files; set it to one file or pass the client path explicitly")
 		}
 		selected = path
 	}
 	if selected == "" {
-		return "", errors.New("KUBECONFIG contains no file paths; run setup FILE with one kubeconfig")
+		return "", errors.New("KUBECONFIG contains no file paths; set it to one file or pass the client path explicitly")
 	}
 	return selected, nil
 }
