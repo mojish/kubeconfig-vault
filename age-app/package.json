@@ -2,7 +2,7 @@
   "name": "kube-unlock-age",
   "private": true,
   "type": "module",
-  "scripts": { "build:web": "node build.mjs", "test:ui": "node ui.test.mjs", "test:browser": "node browser.test.mjs", "test:physical": "node physical.test.mjs", "audit:security": "npm audit && go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./..." },
+  "scripts": { "build:web": "node build.mjs", "test:ui": "node ui.test.mjs && node test-support/cdp.test.mjs", "test:browser": "node browser.test.mjs", "test:physical": "node physical.test.mjs", "audit:security": "npm audit && go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./..." },
   "dependencies": { "age-encryption": "0.3.1" },
   "devDependencies": { "esbuild": "0.28.2" }
 }

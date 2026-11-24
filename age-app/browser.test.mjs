@@ -20,6 +20,7 @@ import { displayNamespace } from "./test-support/freelens-desktop.mjs";
 const cwd = fileURLToPath(new URL(".", import.meta.url));
 const options = process.argv.slice(2);
 const fullHour = options.length === 1 && options[0] === "--one-hour-session";
+const gui = process.env.KUBE_UNLOCK_TEST_FREELENS_DESKTOP;
 if (options.length && !fullHour) throw new Error("Expected --one-hour-session or no options");
 const root = await mkdtemp(join(tmpdir(), "kua-"));
 let state = join(root, "state");
@@ -309,28 +310,31 @@ try {
   assert.deepEqual(await evaluate("[localStorage.length,sessionStorage.length]"),[0,0]);
   console.log("PASS: real kubectl to synthetic HTTPS API, concurrent unlock sharing, one-hour cache, empty browser storage.");
 
-  if (fullHour) {
-    const expires = Date.parse(cached.expires_at);
+  async function verifyOneHour(kubeconfig, primary, secondary, version) {
+    const session = JSON.parse(await cli("status"));
+    const expires = Date.parse(session.expires_at);
+    assert.ok(expires - Date.now() > 3500000, "expected a fresh default session");
     const opens = (await urls()).length;
     for (const remainingMinutes of [50, 40, 30, 20, 10, 1]) {
       await delay(Math.max(0, expires - remainingMinutes * 60_000 - Date.now()));
-      const request = await kube().promise;
+      const request = await kube(primary, kubeconfig).promise;
       assert.equal(request.code, 0, "warm kubectl request failed during the one-hour session");
-      assert.equal(JSON.parse(request.stdout).gitVersion, "v1.32.0");
-      assert.equal(JSON.parse(await cli("status")).expires_at, cached.expires_at);
+      assert.equal(JSON.parse(request.stdout).gitVersion, version);
+      assert.equal(JSON.parse(await cli("status")).expires_at, session.expires_at);
       assert.equal((await urls()).length, opens);
       console.log(`One-hour trial: request passed with ${remainingMinutes} min remaining and the original deadline.`);
     }
     // Status displays whole seconds. Wait past even the nanosecond deadline.
     await delay(Math.max(0, expires + 1500 - Date.now()));
     assert.equal(JSON.parse(await cli("status")).fully_locked, true);
-    const first = kube(), second = kube("second");
+    const first = kube(primary, kubeconfig), second = kube(secondary, kubeconfig);
     await successful(first);
     assert.equal((await second.promise).code, 0);
     assert.equal((await urls()).length, opens + 1);
     assert.ok(Date.parse(JSON.parse(await cli("status")).expires_at) > expires + 3500000);
     console.log("PASS: six real requests preserved the default hour; two requests after expiry shared one fresh approval.");
   }
+  if (fullHour && !gui) await verifyOneHour(source, "synthetic", "second", "v1.32.0");
 
   // A rejected browser request produces one failed unlock for two different clusters.
   await cli("lock");
@@ -682,32 +686,48 @@ try {
     assert.equal(JSON.parse((await kube("synthetic",client).promise).stdout).gitVersion,"v1.32.0");
     assert.equal((await urls()).length,beforeExpired.pages);
     console.log("PASS: kubectl rejected an expired JWT before contacting the API and reused the session for a valid credential.");
-    const gui = process.env.KUBE_UNLOCK_TEST_FREELENS_DESKTOP;
     if (gui) {
-      for (const reconnect of [false, true]) {
-        if (reconnect) {
-          assert.equal(JSON.parse(await cli("lock")).fully_locked,true);
-          desktop.namespace = "vault-test-reconnect";
-        }
-        const session = JSON.parse(await cli("status"));
-        const opens = (await urls()).length, initialLists = desktop.lists;
-        const desktopRun = new AbortController();
-        const operation = {done:false, waitIterations:2000};
-        operation.promise = displayNamespace({binary:gui, root, kubeconfig:client, context:"cert",
-          namespace:desktop.namespace, received:() => desktop.lists > initialLists, signal:desktopRun.signal})
-          .then(() => ({code:0}), error => ({code:1, stderr:error.message}))
-          .finally(() => { operation.done = true; });
-        try { await successful(operation); }
-        finally { desktopRun.abort(); await operation.promise; }
-        assert.equal((await urls()).length,opens + Number(reconnect));
-        const after = JSON.parse(await cli("status"));
-        assert.ok(after.unlocked);
-        if (!reconnect) assert.equal(after.expires_at,session.expires_at);
-        assert.equal((await kube("cert",client).promise).code,0);
-        assert.equal((await urls()).length,opens + Number(reconnect));
-        console.log(reconnect
-          ? "PASS: Freelens reopened after lock, approved once and rendered the new authenticated namespace; kubectl shared that session."
-          : "PASS: Freelens rendered a certificate-authenticated namespace using kubectl's original session and deadline.");
+      const desktopRun = new AbortController();
+      function observeNamespace() {
+        const lists = desktop.lists;
+        return {namespace:desktop.namespace, received:() => desktop.lists > lists};
+      }
+      const desktopOptions = {binary:gui, root, kubeconfig:client, context:"cert", signal:desktopRun.signal};
+      const session = JSON.parse(await cli("status"));
+      const opens = (await urls()).length;
+      let reconnect;
+      try {
+        await displayNamespace({...desktopOptions, ...observeNamespace(), afterFirstView:async () => {
+          assert.equal((await urls()).length, opens);
+          assert.equal(JSON.parse(await cli("status")).expires_at, session.expires_at);
+          console.log("PASS: Freelens displayed the initial mutual-TLS namespace using kubectl's existing session.");
+          if (fullHour) {
+            await verifyOneHour(client, "cert", "synthetic", "v1.32.1");
+          } else {
+            assert.equal(JSON.parse(await cli("lock")).fully_locked, true);
+            assert.equal(JSON.parse((await successful(kube("cert", client))).stdout).gitVersion, "v1.32.1");
+          }
+          desktop.namespace = "vault-test-renewed";
+          certificateAPI.closeAllConnections();
+          return observeNamespace();
+        }});
+        assert.equal((await urls()).length, opens + 1);
+        console.log("PASS: the same Freelens process displayed a new mutual-TLS namespace after one shared renewal.");
+
+        assert.equal(JSON.parse(await cli("lock")).fully_locked, true);
+        desktop.namespace = "vault-test-reconnect";
+        reconnect = {done:false, waitIterations:2000};
+        reconnect.promise = displayNamespace({...desktopOptions, ...observeNamespace()})
+          .catch(error => error)
+          .finally(() => { reconnect.done = true; });
+        const reconnectError = await complete(reconnect);
+        if (reconnectError) throw reconnectError;
+        assert.equal((await kube("cert", client).promise).code, 0);
+        assert.equal((await urls()).length, opens + 2);
+        console.log("PASS: Freelens reopened after lock, approved once and rendered the new authenticated namespace; kubectl shared that session.");
+      } finally {
+        desktopRun.abort();
+        await reconnect?.promise;
       }
     }
     const certRecovery = join(root,"mixed-recovered");
