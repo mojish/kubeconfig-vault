@@ -425,6 +425,17 @@ try {
   assert.equal(edit, JSON.parse(await cli("status")).edit_path);
   assert.equal(await readFile(edit,"utf8"),original);
   const locked=JSON.parse(await cli("lock"));assert.equal(locked.fully_locked,false);assert.equal(locked.edit_open,true);
+  const pagesBeforeTerminalLock = (await urls()).length;
+  const terminalLock = await launch(["lock"], {terminal:true}).promise;
+  assert.equal(terminalLock.code, 0);
+  assert.ok(terminalLock.stdout.includes("plaintext edit is still on disk"));
+  assert.ok(terminalLock.stdout.includes("config lock to encrypt"));
+  const terminalJSON = await launch(["lock", "--json"], {terminal:true}).promise;
+  assert.equal(terminalJSON.code, 0);
+  assert.equal(JSON.parse(terminalJSON.stdout).edit_open, true);
+  assert.ok(await readFile(edit, "utf8") === original, "locking changed the working edit");
+  assert.equal((await urls()).length, pagesBeforeTerminalLock);
+  console.log("PASS: terminal lock explained the open edit and preserved the working file and JSON status without a browser prompt.");
   const pagesBeforeBadEdit = (await urls()).length;
   const badEdit = "not: [SYNTHETIC-INVALID-EDIT";
   await writeFile(edit,badEdit,{mode:0o600});
