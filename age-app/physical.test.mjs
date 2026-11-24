@@ -1,6 +1,7 @@
 // Manual hardware qualification. No DevTools, virtual authenticator, or real config.
 import assert from "node:assert/strict";
 import { dummyAPI } from "./test-support/dummy-api.mjs";
+import { captureProcess } from "./test-support/captured-process.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -47,14 +48,10 @@ const deadline = setTimeout(interrupt, (macGUI ? 30 : 15) * 60_000);
 function start(command, args, env = process.env) {
   const child = spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
   children.push(child);
-  let stdout = "", stderr = "";
-  child.stdout.on("data", b => { stdout = (stdout + b).slice(-65536); });
-  child.stderr.on("data", b => { stderr = (stderr + b).slice(-65536); });
   // Keep errors captured even when a long-lived child is not currently awaited.
-  const completed = new Promise(resolve => {
-    child.once("error", () => resolve({ code: -1, stdout: "", stderr: "child startup failed" }));
-    child.once("exit", code => resolve({ code, stdout, stderr }));
-  });
+  const completed = captureProcess(child, 65536).promise.catch(() => ({
+    code: -1, stdout: "", stderr: "child startup failed",
+  }));
   return { child, completed };
 }
 async function run(command, args, timeout = 360_000) {
