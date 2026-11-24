@@ -28,3 +28,17 @@ func TestRecoveryHelpStartsWithSelectedCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionAndEditingHelpNamesTheSelectedCommand(t *testing.T) {
+	for _, topic := range []string{"lock", "unlock", "stop", "config unlock", "config lock", "config discard", "config link", "config unlink", "config repair"} {
+		var out bytes.Buffer
+		if err := printHelp(&out, strings.Fields(topic)); err != nil {
+			t.Fatal(err)
+		}
+		usage, _, _ := strings.Cut(out.String(), "\n")
+		command := "kubeconfig-vault " + topic
+		if usage != command && !strings.HasPrefix(usage, command+" ") {
+			t.Errorf("%s help starts with %q", topic, usage)
+		}
+	}
+}

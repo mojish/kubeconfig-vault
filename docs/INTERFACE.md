@@ -25,12 +25,14 @@ Setup and link store the encrypted original next to its target as `FILE.before-k
 | --- | --- |
 | `status [--json]` | Inspect the helper, active generation, and known plaintext edit paths. Works while the helper is stopped. |
 | `unlock` | Authenticate now and start a new credential session, including during an automatic prompt pause. |
-| `lock` / `stop` | Cancel pending authentication and clear the cached session. `stop` also exits the helper. If the helper is already stopped, both commands report any remaining plaintext edit without starting it. Both can run before setup. |
+| `lock [--json]` / `stop [--json]` | Cancel pending authentication and clear the cached session. `stop` also exits the helper. Both work before setup or with a stopped helper. |
 | `edit` (also `config edit`) | Open a private edit in your editor and attempt to verify and encrypt it when the editor exits successfully. |
 | `config unlock` | Authenticate and create a plaintext file for editing separately. |
 | `config lock [--accept-connection-changes]` | Validate and save the edit, verify the new vault, and remove the plaintext. The flag approves reviewed changes to connection, trust, or user mapping. |
 | `config discard` | Delete the unsaved edit and any interrupted-save copy, and clear the session. |
 | `path kubeconfig` / `path edit` / `path vault` | Print the path of the requested existing file. `status` lists interrupted-save paths. |
+
+In a terminal, `lock` and `stop` report whether a plaintext edit still needs attention. For a normal edit, save and close the editor and run `kubeconfig-vault config lock`. An interrupted save can have multiple plaintext files. Use `status` to locate them and preserve the changes you need. Pipes and `--json` return the machine-readable session result.
 
 The editor comes from `VISUAL`, then `EDITOR`, then `vi`. An executable path can contain spaces. When specifying arguments, separate them with whitespace. The helper adds `--wait` to supported GUI editors. An unsuccessful editor exit preserves the edit. `config lock` reports `changed: false` if the authenticated original and current inputs still match, or `changed: true` after publishing a new save.
 

@@ -143,7 +143,7 @@ func (s *service) liveStatus() (*clientStatus, error) {
 
 // Stopping a session never needs to launch a helper. If no helper owns the
 // lock, report any remaining edit using directory metadata alone.
-func (s *service) endSession(op string) error {
+func (s *service) endSession(op string, asJSON bool) error {
 	if err := checkPrivateDir(s.state); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -151,14 +151,46 @@ func (s *service) endSession(op string) error {
 	if err != nil {
 		return err
 	}
+	var result json.RawMessage
 	if conn == nil {
-		return json.NewEncoder(os.Stdout).Encode(s.status())
+		result, err = json.Marshal(s.status())
+	} else {
+		result, err = exchangeRPC(conn, request{Op: op}, time.Now().Add(16*time.Minute))
 	}
-	result, err := exchangeRPC(conn, request{Op: op}, time.Now().Add(16*time.Minute))
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(result)
+	if asJSON {
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
+	var snapshot clientStatus
+	if json.Unmarshal(result, &snapshot) != nil || snapshot.Kubeconfig != filepath.Join(s.state, "current", "kubeconfig") {
+		return errors.New("cannot interpret the helper response. Run kubeconfig-vault status")
+	}
+	message := snapshot.endSessionMessage(s.editPath())
+	if op == "stop" && conn != nil {
+		message += "\nHelper shutdown requested."
+	}
+	_, err = fmt.Fprintln(os.Stdout, message)
+	return err
+}
+
+func (v clientStatus) endSessionMessage(editPath string) string {
+	session := "Session locked."
+	if v.Unlocked {
+		session = "A credential session is active. Run kubeconfig-vault status to check it."
+	}
+	switch {
+	case len(v.Problems) > 0:
+		return session + "\nCould not confirm the state of plaintext editing files. Run kubeconfig-vault status for details."
+	case v.EditOpen && v.EditPath == editPath && len(v.EditPaths) <= 1:
+		return session + " Your plaintext edit is still on disk.\nSave and close your editor, then run kubeconfig-vault config lock to encrypt the edit."
+	case v.EditOpen:
+		return session + " Plaintext editing files are still on disk.\nRun kubeconfig-vault status to locate them. Preserve any changes you need from each file before discarding an interrupted edit."
+	case !v.FullyLocked && !v.Unlocked:
+		return "Could not confirm that the vault is fully locked. Run kubeconfig-vault status for details."
+	}
+	return session
 }
 
 func (s *service) inspectStatus() (clientStatus, error) {

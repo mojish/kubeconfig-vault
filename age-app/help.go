@@ -95,15 +95,62 @@ To edit in separate steps, see kubeconfig-vault help config.`
 
 Show the session deadline, any open edit, and what to do if the vault needs
 attention. Status can run before setup or while the helper is stopped.`
-	case "lock", "unlock":
-		message = `kubeconfig-vault lock       End the helper's session. Open edits stay on disk.
-kubeconfig-vault unlock     Approve a new session, including during a prompt pause.
+	case "lock":
+		message = `kubeconfig-vault lock [--json]
 
-Clients are asked to refresh within 60 seconds. Lock stops the helper issuing
-credentials until the next unlock. The API server decides how long a delivered
-credential works. Existing connections and unfinished plaintext edits can remain.`
-	case "config", "config unlock", "config lock", "config discard", "config link", "config unlink", "config repair":
+End the helper's credential session. An open plaintext edit stays on disk.
+To finish editing, save and close your editor and run kubeconfig-vault config lock.
+Clients are asked to refresh within 60 seconds. The API server controls
+credential validity, and established connections can stay open.`
+	case "unlock":
+		message = `kubeconfig-vault unlock
+
+Approve a credential session in the browser. Use this command to resume
+access immediately after declining an unexpected automatic request.`
+	case "stop":
+		message = `kubeconfig-vault stop [--json]
+
+End the credential session and shut down the helper. A plaintext edit stays
+on disk. The next command that needs the helper can start it again.`
+	case "config":
 		message = configHelp
+	case "config unlock":
+		message = `kubeconfig-vault config unlock
+
+Approve with your security key to open a private plaintext copy for editing.
+Run kubeconfig-vault path edit to find it. After saving and closing your
+editor, run kubeconfig-vault config lock to encrypt and verify your changes.`
+	case "config lock":
+		message = `kubeconfig-vault config lock [--accept-connection-changes]
+
+Save and close your editor first. This command validates the edit, verifies
+the encrypted save, and removes the plaintext working copy. If you changed
+a server address, TLS trust, or user mapping, review those changes before
+adding --accept-connection-changes.`
+	case "config discard":
+		message = `kubeconfig-vault config discard
+
+Delete unsaved plaintext editing files and clear the session. The last
+encrypted save stays available. Run kubeconfig-vault status first if a save
+was interrupted, and preserve any changes you need from each listed file.`
+	case "config link":
+		message = `kubeconfig-vault config link [--kubeconfig FILE]
+
+Attach a client path to an existing vault. Choose the path kubectl or
+Freelens reads. For first-time protection, use kubeconfig-vault setup.`
+	case "config unlink":
+		message = `kubeconfig-vault config unlink [--kubeconfig FILE]
+
+Undo setup for this client path. Close your editor and quit clients first.
+Make a backup or export any changes you saved after setup. Approve with
+your key to restore the original plaintext file. If the path was originally
+empty, the managed link is removed.`
+	case "config repair":
+		message = `kubeconfig-vault config repair [--kubeconfig FILE]
+
+If status reports a missing generated client file, approve with your
+security key to rebuild it from the last encrypted save. You may need to
+select your context or namespace again afterward.`
 	case "recovery":
 		message = recoveryHelp
 	case "backup":
@@ -147,7 +194,7 @@ security key and choose a new filename. The file contains usable credentials.
 
 For a file you can use with kubectl, run
   kubeconfig-vault export recovered-config`
-	case "advanced", "import", "stop", "path", "serve", "credential", "recovery-key", "recovery-key new", "recovery-key public", "history", "history prune":
+	case "advanced", "import", "path", "serve", "credential", "recovery-key", "recovery-key new", "recovery-key public", "history", "history prune":
 		message = advancedHelp
 	case "options":
 		message = `kubeconfig-vault [global options] COMMAND

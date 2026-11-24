@@ -409,10 +409,10 @@ func run(args []string) error {
 		return s.printStatus(len(a) == 2 || !term.IsTerminal(int(os.Stdout.Fd())))
 	}
 	if a[0] == "lock" || a[0] == "stop" {
-		if len(a) != 1 {
-			return errors.New("unexpected command argument")
+		if len(a) > 2 || len(a) == 2 && a[1] != "--json" {
+			return fmt.Errorf("usage: %s [--json]", a[0])
 		}
-		return (&service{state: *state}).endSession(a[0])
+		return (&service{state: *state}).endSession(a[0], len(a) == 2 || !term.IsTerminal(int(os.Stdout.Fd())))
 	}
 	executable, err := os.Executable()
 	if err != nil {
