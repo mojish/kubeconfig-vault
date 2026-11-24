@@ -232,6 +232,48 @@ func printPath(state string, args []string) error {
 	return err
 }
 
+func runRecover(args []string) error {
+	const usage = "usage: recover VAULT.age [--key FILE] --check|--out NEW-FILE"
+	if len(args) < 2 || args[0] == "" {
+		return errors.New(usage)
+	}
+	var key, out string
+	var check bool
+	for i := 1; i < len(args); i++ {
+		switch option := args[i]; option {
+		case "--check":
+			if check {
+				return errors.New(usage)
+			}
+			check = true
+		case "--key", "--out":
+			i++
+			if i == len(args) || args[i] == "" {
+				return errors.New(usage)
+			}
+			if option == "--key" && key == "" {
+				key = args[i]
+			} else if option == "--out" && out == "" {
+				out = args[i]
+			} else {
+				return errors.New(usage)
+			}
+		default:
+			return errors.New(usage)
+		}
+	}
+	if check == (out != "") {
+		return errors.New(usage)
+	}
+	if err := recoverFile(args[0], key, out); err != nil {
+		return err
+	}
+	if out != "" {
+		fmt.Fprintln(os.Stdout, "Portable plaintext config recovered to the selected file.")
+	}
+	return nil
+}
+
 // Set from the release tag when packaging a binary.
 var version = "dev"
 
@@ -302,25 +344,9 @@ func run(args []string) error {
 		}
 	}
 	if a[0] == "recover" {
-		switch {
-		case len(a) == 3 && a[2] == "--check":
-			return recoverFromTerminal(a[1], "")
-		case len(a) == 5 && a[2] == "--key" && a[4] == "--check":
-			return recoverFile(a[1], a[3], "")
-		case len(a) == 4 && a[2] == "--out" && a[3] != "":
-			if err := recoverFromTerminal(a[1], a[3]); err != nil {
-				return err
-			}
-		case len(a) == 6 && a[2] == "--key" && a[4] == "--out" && a[5] != "":
-			if err := recoverFile(a[1], a[3], a[5]); err != nil {
-				return err
-			}
-		default:
-			return errors.New("usage: recover VAULT.age [--key FILE] --check|--out NEW-FILE")
-		}
-		fmt.Fprintln(os.Stdout, "Portable plaintext config recovered to the selected file.")
-		return nil
+		return runRecover(a[1:])
 	}
+
 	if *state == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -407,6 +433,9 @@ func run(args []string) error {
 				return err
 			}
 		} else {
+			if err := checkBackupInput(path); err != nil {
+				return err
+			}
 			key, err := promptRecoveryKey()
 			if err != nil {
 				return err

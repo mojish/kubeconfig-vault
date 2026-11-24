@@ -45,7 +45,9 @@ The editor comes from `VISUAL`, then `EDITOR`, then `vi`. An executable path can
 | `history prune --keep COUNT` | Authenticate and retain the active generation plus the newest others, up to the requested count. An open edit blocks pruning. Separate backups and rollback copies are preserved. |
 | `recovery-key new FILE` / `recovery-key public FILE` | Create a private hybrid age key file, or print its public recipient. Normal setup generates a recovery key for you. |
 
-For `recover` and `restore`, omitting `--key FILE` opens a hidden terminal prompt. File-based recovery identities must belong to you, have private permissions and have no hard links. Backup, recovery and export require unused output filenames. Portable exports embed public CAs and can differ from the original formatting.
+For `recover` and `restore`, omitting `--key FILE` opens a hidden terminal prompt after a basic check of the backup's age header. Decryption with the key verifies the backup. File-based recovery identities must belong to you, have private permissions and have no hard links. With `recover`, the key option can appear before or after `--check` or `--out FILE`.
+
+Backup, recovery and export require unused output filenames. Export and recovery check for an existing entry or a missing parent directory before asking for a key. If a file appears there during approval, the final write preserves it. Portable exports embed public CAs and can differ from the original formatting.
 
 ## Status and repair
 

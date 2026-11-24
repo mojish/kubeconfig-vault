@@ -18,6 +18,8 @@ import (
 
 const maxVault = 32 << 20
 
+const ageHeader = "age-encryption.org/v1\n"
+
 var validID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 func randomID() string {
@@ -88,6 +90,36 @@ func syncDir(path string) error {
 	}
 	defer f.Close()
 	return f.Sync()
+}
+
+// A read-only preflight avoids prompting for a destination that is already
+// unusable. The final write still opens the output exclusively.
+func checkNewOutput(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return errors.New("output already exists; choose a new filename")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.New("cannot inspect the output path")
+	}
+	dir, err := os.Stat(filepath.Dir(path))
+	if err != nil || !dir.IsDir() {
+		return errors.New("output directory must already exist")
+	}
+	return nil
+}
+
+// Only inspect the public format marker before asking for a private recovery
+// key. The ordinary decrypt path authenticates the entire selected backup.
+func checkBackupInput(path string) error {
+	f, err := openBounded(path, maxVault, false)
+	if err != nil {
+		return errors.New("cannot open the backup; select an age vault file")
+	}
+	defer f.Close()
+	var header [len(ageHeader)]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil || string(header[:]) != ageHeader {
+		return errors.New("selected file is not an age vault backup")
+	}
+	return nil
 }
 
 // Never overwrite a user's source or recovery file, including through symlinks.
@@ -180,7 +212,7 @@ func backupGeneration(state, out string) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.HasPrefix(cipher, []byte("age-encryption.org/v1\n")) {
+	if !bytes.HasPrefix(cipher, []byte(ageHeader)) {
 		return errors.New("selected generation has no age ciphertext header")
 	}
 	return publishNew(out, cipher)

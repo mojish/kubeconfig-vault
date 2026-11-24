@@ -252,6 +252,9 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		}
 		return s.status(), nil
 	case "export":
+		if err := checkNewOutput(r.Path); err != nil {
+			return nil, err
+		}
 		p, _, err := s.open(ctx, "Export a new plaintext kubeconfig")
 		if err != nil {
 			return nil, err
@@ -695,14 +698,24 @@ func credentialDeadline(token string, sessionEnd, now time.Time) time.Time {
 }
 
 func recoverFile(cipherPath, keyPath, out string) error {
-	key, err := readRecovery(keyPath)
+	if out != "" {
+		if err := checkNewOutput(out); err != nil {
+			return err
+		}
+	}
+	var key *age.HybridIdentity
+	var err error
+	if keyPath == "" {
+		if err := checkBackupInput(cipherPath); err != nil {
+			return err
+		}
+		key, err = promptRecoveryKey()
+	} else {
+		key, err = readRecovery(keyPath)
+	}
 	if err != nil {
 		return err
 	}
-	return recoverWithKey(cipherPath, out, key)
-}
-
-func recoverWithKey(cipherPath, out string, key *age.HybridIdentity) error {
 	p, err := readRecovered(cipherPath, key)
 	if err != nil {
 		return err
