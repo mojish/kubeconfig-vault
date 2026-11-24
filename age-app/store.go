@@ -187,7 +187,7 @@ func activeGeneration(state string) (string, error) {
 		return "", err
 	}
 	if id == "" {
-		return "", errors.New("no age vault imported")
+		return "", errors.New("no active vault generation; run kubeconfig-vault status")
 	}
 	return id, nil
 }

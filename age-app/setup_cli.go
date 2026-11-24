@@ -100,6 +100,9 @@ func (s *service) validateInput(path, entry string) error {
 }
 
 func (s *service) startSetup(path, recoveryFile string) error {
+	if err := s.checkSocketPath(); err != nil {
+		return err
+	}
 	if err := checkPrivateDir(s.state); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

@@ -40,6 +40,71 @@ func TestEndSessionBeforeSetupCreatesNothing(t *testing.T) {
 	}
 }
 
+func TestBeforeSetupRejectsInvalidCommandsWithoutCreatingState(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "kcv-start-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	state := filepath.Join(dir, "missing")
+	for _, args := range [][]string{{"unknown"}, {"backup"}, {"config", "bogus"}, {"unlock"}, {"config", "discard"}} {
+		err := run(append([]string{"--state-dir", state}, args...))
+		if args[len(args)-1] == "discard" {
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else if err == nil {
+			t.Fatalf("%v unexpectedly succeeded", args)
+		}
+		if _, err := os.Lstat(state); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%v created state before setup", args)
+		}
+	}
+}
+
+func TestEnrollmentRejectsLongSocketPathBeforeRecovery(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, strings.Repeat("s", len(unix.RawSockaddrUnix{}.Path)))
+	source := filepath.Join(dir, "fixture")
+	if err := os.WriteFile(source, []byte(synthetic), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"--state-dir", state, "setup", "--check", source}); err != nil {
+		t.Fatalf("offline input check needed a socket: %v", err)
+	}
+	for _, args := range [][]string{{"setup", source}, {"import", source}, {"restore", "unused.age"}, {"serve"}} {
+		err := run(append([]string{"--state-dir", state}, args...))
+		if err == nil || !strings.Contains(err.Error(), "shorter private directory") {
+			t.Fatalf("%v: got %v", args, err)
+		}
+	}
+	if _, err := os.Lstat(state); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("unusable state directory was created")
+	}
+}
+
+func TestRPCIgnoresUnexpectedSocketEntry(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "kcv-sock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	s := service{state: dir, executable: filepath.Join(dir, "absent")}
+	target := filepath.Join(dir, "fixture")
+	if err := os.WriteFile(target, []byte("synthetic"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, s.socket()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.rpc(request{Op: "unlock"}); err == nil || !strings.Contains(err.Error(), "invalid helper socket") {
+		t.Fatalf("expected a socket diagnostic, got %v", err)
+	}
+	if got, err := os.Readlink(s.socket()); err != nil || got != target {
+		t.Fatal("unexpected socket entry was modified")
+	}
+}
+
 func TestEndSessionWithAbandonedSocket(t *testing.T) {
 	dir, err := os.MkdirTemp("", "kcv-st-")
 	if err != nil {
