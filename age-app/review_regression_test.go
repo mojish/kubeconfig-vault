@@ -457,6 +457,63 @@ func TestBootstrapRemovedOnLaunchFailureAndCancellation(t *testing.T) {
 	t.Fatal("cancelled ceremony left bootstrap behind")
 }
 
+func TestBackgroundTabCanReadCompletionAndCloseListener(t *testing.T) {
+	c, err := newCeremony(context.Background(), "synthetic completion", "/usr/bin/true", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.cancel()
+	c.finish(true)
+	// A scheduled/background tab can miss the old 1.5-second delivery window.
+	select {
+	case <-c.ctx.Done():
+		t.Fatal("listener closed before a background tab could read completion")
+	case <-time.After(2 * time.Second):
+	}
+	req, err := http.NewRequest(http.MethodPost, c.origin+"/api/poll", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", c.origin)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Unlock-Capability", c.cap)
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal("background tab could not read final status")
+	}
+	defer resp.Body.Close()
+	var page browserPage
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&page) != nil ||
+		!page.Done || !page.Success || page.Request != nil {
+		t.Fatal("expected only the successful final state")
+	}
+	// A stale poll can receive Done without the tab displaying it. Only an
+	// explicit acknowledgment from the UI should shorten the receipt window.
+	select {
+	case <-c.ctx.Done():
+		t.Fatal("an unacknowledged poll shortened the receipt window")
+	case <-time.After(2 * time.Second):
+	}
+	ack, err := http.NewRequest(http.MethodPost, c.origin+"/api/poll", strings.NewReader(`{"displayed":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack.Header = req.Header.Clone()
+	confirmed, err := (&http.Client{Timeout: 2 * time.Second}).Do(ack)
+	if err != nil {
+		t.Fatal("display acknowledgment failed")
+	}
+	confirmed.Body.Close()
+	if confirmed.StatusCode != http.StatusOK {
+		t.Fatal("display acknowledgment was rejected")
+	}
+	select {
+	case <-c.ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener remained open after delivery")
+	}
+}
+
 func TestLaunchArgumentsDoNotAuthorizeFileKeyAccess(t *testing.T) {
 	if _, e := os.Stat("/proc/self/cmdline"); e != nil {
 		t.Skip("Linux procfs probe")

@@ -42,6 +42,7 @@ Freelens can share the same session when it reads the linked file. If it uses an
 | What you see | What to do |
 | --- | --- |
 | An unexpected unlock page | Choose **Decline request**. Automatic prompts pause for ten minutes. `kubeconfig-vault status` shows the deadline. |
+| You return to the browser after approving | A completed page stops checking the helper. If the page was in the background long enough to lose its final confirmation, check kubectl or Freelens for the result. For an unlock, `kubeconfig-vault status` shows whether the session is active. |
 | A client reports that its credential is not approved for the cluster | Check that it uses the client path selected during setup. An old copy can refer to a previous credential ID, server, or TLS configuration. A locked helper rejects these stale requests before opening the browser. |
 | The browser’s security-key prompt was dismissed | Automatic requests can retry after 30 seconds. Run `kubeconfig-vault unlock` to retry immediately. |
 | Yubico Authenticator has no entry for the vault | The vault creates a non-discoverable credential. A successful unlock tests it directly. |
