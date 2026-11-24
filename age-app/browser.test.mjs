@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { clientCertificateFixture } from "./test-support/client-certificate.mjs";
+import { captureProcess } from "./test-support/captured-process.mjs";
 import { chromeConnection } from "./test-support/cdp.mjs";
 import { dummyAPI } from "./test-support/dummy-api.mjs";
 import { displayNamespace } from "./test-support/freelens-desktop.mjs";
@@ -38,10 +39,8 @@ function launch(args, { terminal = false, program: cliProgram = executable, ...e
   const terminalCommand = ["python3", "-c", "import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))", ...command];
   const [program, ...argv] = terminal ? terminalCommand : command;
   const p = spawn(program, argv, {stdio:[terminal ? "pipe" : "ignore","pipe","pipe"],...extra});
-  children.push(p);let stdout="",stderr="";const result={done:false,child:p,get output(){return stdout}};
-  p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);
-  result.promise = new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;result.code=code;result.stdout=stdout;result.stderr=stderr;resolve(result)})});
-  return result;
+  children.push(p);
+  return captureProcess(p);
 }
 async function cli(...args){const r=await launch(args).promise;if(r.code!==0)throw new Error("Synthetic CLI failed: "+r.stderr);return r.stdout;}
 async function waitFor(fn, label, iterations=150){for(let i=0;i<iterations;i++){if(failure)throw failure;const result=await fn();if(result)return result;await delay(50)}throw new Error("Timed out: "+label)}
@@ -123,7 +122,7 @@ try {
   children.push(plainClient);
   let diagnostic = "";
   plainClient.stderr.on("data",buf=>diagnostic+=buf);
-  const [plainCode] = await once(plainClient,"exit");
+  const [plainCode] = await once(plainClient,"close");
   assert.equal(plainCode,0,"plaintext fixture failed mutual TLS before vault setup: "+diagnostic);
   console.log("PASS: synthetic client and issuer work with kubectl before enrollment.");
   const original=JSON.stringify(sourceObject,null,2);await writeFile(source,original,{mode:0o600});
@@ -270,14 +269,16 @@ try {
     }, "redacted setup diagnostic");
     await rejected.promise;
     assert.equal(rejected.code, 1);
-    assert.ok(rejected.stderr.includes(field));
+    assert.ok(rejected.stderr.includes(field),
+      `Expected the setup diagnostic for ${field}; received ${Buffer.byteLength(rejected.stderr)} stderr bytes`);
     assert.ok(!(rejected.stdout+rejected.stderr).includes(redactionMarker));
   }
   assert.equal((await urls()).length, pagesBeforeInvalidSetup);
 
   const kube=(context="synthetic", kubeconfig=source)=>{
     const p=spawn(process.env.KUBE_UNLOCK_TEST_KUBECTL||"kubectl",["--context",context,"--cache-dir",join(root,"kubecache"),"get","--raw=/version","--request-timeout=30s"],{env:{...process.env,KUBECONFIG:kubeconfig},stdio:["ignore","pipe","pipe"]});
-    children.push(p);let stdout="",stderr="";const result={done:false};p.stdout.on("data",b=>stdout+=b);p.stderr.on("data",b=>stderr+=b);result.promise=new Promise((resolve,reject)=>{p.once("error",reject);p.once("exit",code=>{result.done=true;Object.assign(result,{code,stdout,stderr});resolve(result)})});return result;
+    children.push(p);
+    return captureProcess(p);
   };
   function kubectlConfig(...args) {
     const result = spawnSync(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl",

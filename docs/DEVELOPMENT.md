@@ -27,6 +27,7 @@ From `age-app/`, after building the browser assets:
 go vet ./...
 go test -race ./...
 npm run test:ui
+node --test test-support/captured-process.test.mjs
 sh ../scripts/test-install.sh
 python3 -B ../scripts/test_public_install.py
 ```
