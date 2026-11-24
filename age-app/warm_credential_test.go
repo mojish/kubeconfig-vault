@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -30,6 +31,42 @@ func warmSession(t *testing.T) (*service, request, string) {
 	}
 	req := request{Op: "credential", ID: p.Records["demo"].ID, Cluster: &p.Projection.Clusters[0].Cluster}
 	return s, req, filepath.Join(s.state, "generations", id)
+}
+
+func BenchmarkWarmCredentialDelivery(b *testing.B) {
+	for _, count := range []int{10, 100, 1000} {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			p, key := samplePayload(b)
+			first := p.Projection.Contexts[0]
+			for i := 1; i < count; i++ {
+				copy := first
+				copy.Name = "context-" + strconv.Itoa(i)
+				p.Projection.Contexts = append(p.Projection.Contexts, copy)
+			}
+			cipher, err := encryptPayload(p, key.Recipient())
+			if err != nil {
+				b.Fatal(err)
+			}
+			s := &service{state: privateTemp(b), ttl: time.Hour}
+			id, err := commitSnapshot(s.state, "", p, cipher)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err := s.cachePayload(0, p, id); err != nil {
+				b.Fatal(err)
+			}
+			req := request{Op: "credential", ID: p.Records["demo"].ID, Cluster: &p.Projection.Clusters[0].Cluster}
+			if _, err := s.handle(context.Background(), req); err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := s.handle(context.Background(), req); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 func TestWarmCredentialSkipsCiphertextRead(t *testing.T) {
@@ -75,6 +112,50 @@ func TestMissingVaultDoesNotStartPromptCooldown(t *testing.T) {
 	}
 	if _, err := s.handle(context.Background(), req); err == nil || !s.retryAfter.IsZero() {
 		t.Fatal("missing ciphertext should report a file error without delaying the next attempt")
+	}
+}
+
+func TestWarmDeliveryRechecksClientBytesAfterNamespaceChange(t *testing.T) {
+	s, req, dir := warmSession(t)
+	if _, err := s.handle(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "kubeconfig")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := parseConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Contexts[0].Context.Namespace = "new-namespace"
+	selection, err := serializeConfig(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, selection, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.handle(context.Background(), req); err != nil {
+		t.Fatal("a namespace change should preserve the session", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := bytes.Replace(selection, []byte("example.invalid"), []byte("changed.invalid"), 1)
+	if bytes.Equal(changed, selection) || len(changed) != len(selection) {
+		t.Fatal("fixture must change the API endpoint without changing the length")
+	}
+	if err := os.WriteFile(path, changed, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := s.handle(context.Background(), req); err == nil || result != nil || s.cache != nil {
+		t.Fatal("a changed connection with unchanged size and mtime must invalidate the session")
 	}
 }
 
@@ -162,6 +243,9 @@ func TestWarmCredentialRejectsChangedState(t *testing.T) {
 	for name, change := range tests {
 		t.Run(name, func(t *testing.T) {
 			s, req, dir := warmSession(t)
+			if _, err := s.handle(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
 			if err := change(dir, s); err != nil {
 				t.Fatal(err)
 			}

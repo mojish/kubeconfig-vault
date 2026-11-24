@@ -50,6 +50,8 @@ A ceremony expires after five minutes. Locking or disconnecting the requesting c
 
 The default helper session lasts one hour from approval. Both elapsed time and a wall-clock deadline limit it, including across ordinary sleep. Every delivery checks the active generation, metadata, managed client settings, cluster binding, and ciphertext file metadata. A warm request uses the in-memory credential. A cold unlock reads and decrypts the ciphertext.
 
+On every credential delivery the helper reads the current generated client file under its usual ownership, link, permission and size checks. Within an approved session, identical bytes can reuse the previous settings comparison. When the SHA-256 digest changes, the helper parses the file and compares the managed fields with the authenticated vault again. This allows a namespace selection to change and rejects a different cluster endpoint. The digest expires with the session.
+
 The client’s own cache has a shorter deadline. Vault returns the earliest of 60 seconds from delivery, the helper’s expiry, and the credential’s expiry when available. For a client certificate it uses the leaf certificate’s expiry. For a JWT it reads the numeric `exp` claim, including fractional seconds and exponent notation. It uses that unverified claim only to shorten local access. The cluster decides whether to accept the credential. [JWT NumericDate](https://www.rfc-editor.org/rfc/rfc7519#section-2)
 
 `lock` clears the helper’s cache. A running client can still use its delivered credential or an established connection.

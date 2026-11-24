@@ -256,15 +256,7 @@ func loadMetadata(dir, id string) (*snapshot, error) {
 }
 
 func loadGenerationSettings(state, id string) (*snapshot, error) {
-	dir := filepath.Join(state, "generations", id)
-	if err := checkPrivateDir(dir); err != nil {
-		return nil, err
-	}
-	s, err := loadMetadata(dir, id)
-	if err != nil {
-		return nil, err
-	}
-	b, err := readBounded(filepath.Join(dir, "kubeconfig"), maxSource, true)
+	s, b, err := readGenerationSettings(state, id)
 	if err != nil {
 		return nil, err
 	}
@@ -273,6 +265,19 @@ func loadGenerationSettings(state, id string) (*snapshot, error) {
 		return nil, errors.New("generated kubeconfig is invalid")
 	}
 	return s, nil
+}
+
+func readGenerationSettings(state, id string) (*snapshot, []byte, error) {
+	dir := filepath.Join(state, "generations", id)
+	if err := checkPrivateDir(dir); err != nil {
+		return nil, nil, err
+	}
+	s, err := loadMetadata(dir, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := readBounded(filepath.Join(dir, "kubeconfig"), maxSource, true)
+	return s, b, err
 }
 
 func decryptPayload(cipher []byte, identity age.Identity) (*payload, error) {
