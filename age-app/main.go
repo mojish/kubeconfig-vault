@@ -373,6 +373,12 @@ func run(args []string) error {
 		s := &service{state: *state}
 		return s.printStatus(len(a) == 2 || !term.IsTerminal(int(os.Stdout.Fd())))
 	}
+	if a[0] == "lock" || a[0] == "stop" {
+		if len(a) != 1 {
+			return errors.New("unexpected command argument")
+		}
+		return (&service{state: *state}).endSession(a[0])
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return errors.New("cannot resolve application executable")
@@ -465,7 +471,7 @@ func run(args []string) error {
 	}
 	r := request{Op: a[0]}
 	switch a[0] {
-	case "lock", "stop", "unlock":
+	case "unlock":
 		if len(a) != 1 {
 			return errors.New("unexpected command argument")
 		}

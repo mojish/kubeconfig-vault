@@ -232,6 +232,10 @@ try {
     await rename(legacyExecutable, executable);
   }
   await symlink("kubeconfig-vault", legacyExecutable);
+  for (const command of ["lock", "stop"]) {
+    assert.equal(JSON.parse(await cli(command)).fully_locked, true);
+    assert.equal(JSON.parse(await cli("status")).helper_running, false);
+  }
   daemon = await startDaemon();
 
   const pagesBeforeInvalidSetup = (await urls()).length;

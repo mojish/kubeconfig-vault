@@ -24,7 +24,7 @@ Setup and link store the encrypted original next to its target as `FILE.before-k
 | --- | --- |
 | `status [--json]` | Inspect the helper, active generation, and known plaintext edit paths. Works while the helper is stopped. |
 | `unlock` | Authenticate now and start a new credential session, including during an automatic prompt pause. |
-| `lock` / `stop` | Cancel pending authentication and clear the cached session. `stop` also exits the helper. Both preserve open edits. |
+| `lock` / `stop` | Cancel pending authentication and clear the cached session. `stop` also exits the helper. If the helper is already stopped, both commands report any remaining plaintext edit without starting it. Both can run before setup. |
 | `edit` (also `config edit`) | Open a private edit in your editor and attempt to verify and encrypt it when the editor exits successfully. |
 | `config unlock` | Authenticate and create a plaintext file for editing separately. |
 | `config lock [--accept-connection-changes]` | Validate and save the edit, verify the new vault, and remove the plaintext. The flag approves reviewed changes to connection, trust, or user mapping. |

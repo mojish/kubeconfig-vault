@@ -24,6 +24,18 @@ func TestPassiveStatusAbsentVault(t *testing.T) {
 	}
 }
 
+func TestEndSessionBeforeSetupCreatesNothing(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "new")
+	for _, op := range []string{"lock", "stop"} {
+		if err := run([]string{"--state-dir", state, op}); err != nil {
+			t.Fatalf("%s before setup: %v", op, err)
+		}
+		if _, err := os.Lstat(state); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s created vault state: %v", op, err)
+		}
+	}
+}
+
 func TestPassiveStatusGenerationAndOpenEdit(t *testing.T) {
 	s := service{state: t.TempDir()}
 	if err := os.Chmod(s.state, 0700); err != nil {

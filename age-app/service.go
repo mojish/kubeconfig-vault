@@ -78,6 +78,7 @@ type service struct {
 	closed                     bool
 	retryAfter                 time.Time // protected by mu
 	stop                       chan struct{}
+	stopOnce                   sync.Once
 }
 
 func (s *service) clearSession() { s.mu.Lock(); s.cache = nil; s.mu.Unlock() }
@@ -152,12 +153,8 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 	if r.Op == "lock" || r.Op == "stop" {
 		result := s.lock(r.Op == "stop")
 		if r.Op == "stop" {
-			time.AfterFunc(100*time.Millisecond, func() {
-				select {
-				case <-s.stop:
-				default:
-					close(s.stop)
-				}
+			s.stopOnce.Do(func() {
+				time.AfterFunc(100*time.Millisecond, func() { close(s.stop) })
 			})
 		}
 		return result, nil

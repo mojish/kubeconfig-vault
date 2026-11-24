@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,7 +113,7 @@ func (s *service) stoppedHelper() error {
 	return nil
 }
 
-func (s *service) liveStatus() (*clientStatus, error) {
+func (s *service) runningConnection(deadline time.Time) (*net.UnixConn, error) {
 	socket, err := os.Lstat(s.socket())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, s.stoppedHelper()
@@ -120,7 +121,6 @@ func (s *service) liveStatus() (*clientStatus, error) {
 	if err != nil || socket.Mode()&os.ModeSocket == 0 {
 		return nil, errors.New("invalid helper socket")
 	}
-	deadline := time.Now().Add(statusTimeout)
 	conn, err := s.connect(deadline)
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return nil, errors.New("helper socket is present but no helper is listening")
@@ -131,6 +131,15 @@ func (s *service) liveStatus() (*clientStatus, error) {
 	if err != nil {
 		return nil, errors.New("cannot connect to helper")
 	}
+	return conn, nil
+}
+
+func (s *service) liveStatus() (*clientStatus, error) {
+	deadline := time.Now().Add(statusTimeout)
+	conn, err := s.runningConnection(deadline)
+	if err != nil || conn == nil {
+		return nil, err
+	}
 	reply, err := exchangeRPC(conn, request{Op: "status"}, deadline)
 	if err != nil {
 		return nil, errors.New("helper did not return status")
@@ -140,6 +149,26 @@ func (s *service) liveStatus() (*clientStatus, error) {
 		return nil, errors.New("invalid helper status")
 	}
 	return &live, nil
+}
+
+// Stopping a session never needs to launch a helper. If no helper owns the
+// lock, report any remaining edit using directory metadata alone.
+func (s *service) endSession(op string) error {
+	if err := checkPrivateDir(s.state); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	conn, err := s.runningConnection(time.Now().Add(statusTimeout))
+	if err != nil {
+		return err
+	}
+	if conn == nil {
+		return json.NewEncoder(os.Stdout).Encode(s.status())
+	}
+	result, err := exchangeRPC(conn, request{Op: op}, time.Now().Add(16*time.Minute))
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
 }
 
 func (s *service) inspectStatus() (clientStatus, error) {
