@@ -198,6 +198,46 @@ func publicCertificates(data []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
+// Materialize one cluster's public CA data within the remaining portable
+// kubeconfig budget. Each cluster embeds its own copy, even for a shared file.
+func embedClusterCA(v *cluster, base string, remaining int) (int, error) {
+	var data []byte
+	var err error
+	switch {
+	case v.CAFile != "" && v.CA != "":
+		return 0, errors.New("choose one CA source")
+	case v.CAFile != "":
+		path := v.CAFile
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(base, path)
+		}
+		data, err = readBounded(path, maxSource, false)
+		if err != nil {
+			return 0, errors.New("unable to read selected CA file")
+		}
+	case v.CA != "":
+		data, err = base64.StdEncoding.DecodeString(v.CA)
+		if err != nil {
+			clear(data)
+			return 0, errors.New("clusters[].cluster.certificate-authority-data must be a complete base64-encoded PEM certificate bundle")
+		}
+	default:
+		return 0, nil
+	}
+	defer clear(data)
+	public, err := publicCertificates(data)
+	if err != nil {
+		return 0, err
+	}
+	size := base64.StdEncoding.EncodedLen(len(public))
+	if size > remaining {
+		return 0, errors.New("embedded cluster CA bundles exceed the kubeconfig size limit")
+	}
+	v.CA = base64.StdEncoding.EncodeToString(public)
+	v.CAFile = ""
+	return size, nil
+}
+
 func serializeConfig(c config) ([]byte, error) {
 	b, err := yaml.Marshal(c)
 	if err != nil {
@@ -211,14 +251,19 @@ func serializeConfig(c config) ([]byte, error) {
 }
 
 func prepare(source []byte, base, state, executable string, previous *payload) (*payload, error) {
-	c, err := parseConfig(source)
+	c, err := parseForProjection(source)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProjectionProxies(c); err != nil {
-		return nil, err
-	}
 	return prepareParsed(c, source, base, state, executable, previous)
+}
+
+func parseForProjection(source []byte) (config, error) {
+	c, err := parseConfig(source)
+	if err != nil {
+		return c, err
+	}
+	return c, validateProjectionProxies(c)
 }
 
 // A generated client file stores proxy-url in readable form. Older encrypted
@@ -241,6 +286,7 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 	}
 	clusterBindings := make(map[string]string, len(c.Clusters))
 	users, contexts := map[string]bool{}, map[string]bool{}
+	remainingCA := maxSource
 	for i := range c.Clusters {
 		n := &c.Clusters[i]
 		if _, exists := clusterBindings[n.Name]; n.Name == "" || exists {
@@ -260,34 +306,11 @@ func prepareParsed(c config, source []byte, base, state, executable string, prev
 				return nil, errors.New("clusters[].cluster.proxy-url must be an HTTP, HTTPS, or SOCKS5 URL without user credentials")
 			}
 		}
-		if v.CAFile != "" {
-			if v.CA != "" {
-				return nil, errors.New("choose one CA source")
-			}
-			path := v.CAFile
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(base, path)
-			}
-			ca, e := readBounded(path, maxSource, false)
-			if e != nil {
-				return nil, errors.New("unable to read selected CA file")
-			}
-			v.CA = base64.StdEncoding.EncodeToString(ca)
-			clear(ca)
-			v.CAFile = ""
+		size, err := embedClusterCA(v, base, remainingCA)
+		if err != nil {
+			return nil, err
 		}
-		if v.CA != "" {
-			ca, e := base64.StdEncoding.DecodeString(v.CA)
-			if e != nil {
-				return nil, errors.New("clusters[].cluster.certificate-authority-data must be a complete base64-encoded PEM certificate bundle")
-			}
-			public, e := publicCertificates(ca)
-			clear(ca)
-			if e != nil {
-				return nil, e
-			}
-			v.CA = base64.StdEncoding.EncodeToString(public)
-		}
+		remainingCA -= size
 		clusterBindings[n.Name] = binding(*v)
 	}
 	// YAML aliases can repeat large credentials. A portable kubeconfig writes

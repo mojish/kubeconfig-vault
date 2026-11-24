@@ -51,7 +51,7 @@ func (s *service) editConfig() error {
 	cmd := exec.Command(binary, append(argv[1:], status.EditPath)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
-		return errors.New("editor exited unsuccessfully; plaintext edit preserved, resume it or run config discard")
+		return errors.New("editor exited unsuccessfully; run kubeconfig-vault path edit to locate your preserved plaintext edit, then save and close your editor and run kubeconfig-vault config lock")
 	}
 	if result, err = s.rpc(request{Op: "config-lock"}); err != nil {
 		return err

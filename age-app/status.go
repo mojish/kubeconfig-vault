@@ -116,13 +116,6 @@ func (s *service) stoppedHelper() error {
 }
 
 func (s *service) runningConnection(deadline time.Time) (*net.UnixConn, error) {
-	socket, err := os.Lstat(s.socket())
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, s.stoppedHelper()
-	}
-	if err != nil || socket.Mode()&os.ModeSocket == 0 {
-		return nil, errors.New("invalid helper socket")
-	}
 	conn, err := s.connect(deadline)
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return nil, errStaleSocket
@@ -131,7 +124,7 @@ func (s *service) runningConnection(deadline time.Time) (*net.UnixConn, error) {
 		return nil, s.stoppedHelper()
 	}
 	if err != nil {
-		return nil, errors.New("cannot connect to helper")
+		return nil, fmt.Errorf("cannot connect to helper: %w", err)
 	}
 	return conn, nil
 }

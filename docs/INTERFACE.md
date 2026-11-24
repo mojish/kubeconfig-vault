@@ -66,7 +66,7 @@ Repair requires an already linked client, a missing generated file, readable enc
 
 ## Supported kubeconfig inputs
 
-- **File** — one Kubernetes `v1` `Config` document, up to 4 MiB. The generated and portable versions must also fit after CAs are embedded.
+- **File** — one Kubernetes `v1` `Config` document, up to 4 MiB. The generated and portable versions must also fit after CAs are embedded. Each cluster's embedded CA counts toward that limit, including clusters that reference the same file. A selected CA file must contain a public certificate. Omit the CA fields to use system trust.
 - **Authentication** — one inline `token` **or** both `client-certificate-data` and `client-key-data` per user. Different users in one file can use different methods. Certificate inputs must be complete base64-encoded PEM, with an end-user certificate first and a matching unencrypted private key. CA signing keys and certificates restricted to server use are rejected. The helper checks the leaf validity period when serving a credential. File-based user credentials, username/password, exec plugins, and auth providers are unsupported.
 - **TLS and proxies** — verified HTTPS with system trust or a public CA certificate supplied inline or by file. CA inputs must contain public certificate PEM blocks only. Supported proxy schemes are HTTP, HTTPS and SOCKS5. The proxy address is copied into the readable client file, so credentials, query strings and fragments are rejected.
 - **Contexts** — named clusters, users and contexts with valid references. Clients can update the current context and namespace. The encrypted editable source preserves legacy `preferences`. The generated client file and portable export omit them.
@@ -77,7 +77,7 @@ Repair requires an already linked client, a missing generated file, readable enc
 | Option | Meaning |
 | --- | --- |
 | `--version` | Print the packaged release version. Source builds normally report `dev`. |
-| `--state-dir PATH` | Choose a private state directory. Defaults to `~/.local/share/kube-unlock-age` on Linux or `~/Library/Application Support/kube-unlock-age` on macOS. Long paths can exceed the OS Unix socket limit. |
+| `--state-dir PATH` | Choose a private state directory. Defaults to `~/.local/share/kube-unlock-age` on Linux or `~/Library/Application Support/kube-unlock-age` on macOS. If the full socket path is too long, setup reports it before asking for a recovery key. Choose a shorter private path. |
 | `--session-seconds N` | Set the absolute session lifetime for a new helper. Range 1–3600. Default 3600. |
 | `--browser PATH` | Choose a browser launcher executable with no arguments. Defaults to `xdg-open` on Linux and `open` on macOS. The launcher must accept a private local HTML file and follow its redirect to localhost. |
 
