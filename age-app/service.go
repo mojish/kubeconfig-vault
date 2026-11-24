@@ -41,6 +41,9 @@ type session struct {
 	Projection   config
 	Deadline     time.Time
 	WallDeadline time.Time
+	// Only the operation holding s.op accesses this digest. It belongs to
+	// this authenticated session and is set after comparing all managed fields.
+	verifiedClientDigest *[sha256.Size]byte
 }
 
 // Constructed only after authenticating the vault for config-unlock. The
@@ -560,12 +563,23 @@ func (s *service) checkCachedGeneration(cached *session) error {
 	if cached.Generation != id {
 		return errors.New("vault generation changed; refusing cached credentials")
 	}
-	settings, err := loadGenerationSettings(s.state, id)
+	settings, clientFile, err := readGenerationSettings(s.state, id)
 	if err != nil {
 		return err
 	}
-	if cached.Meta != settings.Meta || !equalProjection(cached.Projection, settings.Projection) {
+	if cached.Meta != settings.Meta {
 		return errors.New("vault metadata or connection settings changed; refusing cached credentials")
+	}
+	digest := sha256.Sum256(clientFile)
+	if cached.verifiedClientDigest == nil || *cached.verifiedClientDigest != digest {
+		projection, err := parseConfig(clientFile)
+		if err != nil {
+			return errors.New("generated kubeconfig is invalid")
+		}
+		if !equalProjection(cached.Projection, projection) {
+			return errors.New("vault metadata or connection settings changed; refusing cached credentials")
+		}
+		cached.verifiedClientDigest = &digest
 	}
 	cipher, err := openBounded(filepath.Join(s.state, "generations", id, "vault.age"), maxVault, true)
 	if err != nil {
