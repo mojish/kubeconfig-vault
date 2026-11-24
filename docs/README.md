@@ -4,13 +4,27 @@ Start with [installation and setup](../README.md#install-and-set-up). Use the sa
 
 ## Install from downloaded files
 
-Download the installer, `SHA256SUMS`, and the archive for your OS and processor from the same [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest). Keep all three in one directory. From that directory, run:
+Download the installer, `SHA256SUMS`, and the archive for your OS and processor from the same [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest). Keep all three in one directory. You can [verify the downloaded release](#verify-the-downloaded-release) before installation. From the download directory, run:
 
 ```sh
 sh install.sh --from-dir .
 ```
 
 The installer checks the archive and installs the binary without a network connection. If you unpack a verified archive by hand, extract the **whole archive** into an empty directory before running `./kubeconfig-vault --version`. The two executable names share the same bytes inside the tar file.
+
+### Verify the downloaded release
+
+Use a current, signed-in GitHub CLI while online. In a directory containing just the three downloads, set the tag to the release you selected and run:
+
+```sh
+tag=v0.5.0
+repo=mojish/kubeconfig-vault
+gh release verify-asset "$tag" install.sh --repo "$repo" &&
+  gh release verify-asset "$tag" SHA256SUMS --repo "$repo" &&
+  gh release verify-asset "$tag" kubeconfig-vault-*.tar.gz --repo "$repo"
+```
+
+Continue when all three files verify. GitHub checks the local bytes against the signed record for that release. You can then move the verified files to the offline machine. [GitHub release verification](https://cli.github.com/manual/gh_release_verify-asset)
 
 ## Try a sample kubeconfig
 

@@ -4,7 +4,9 @@ Unlock kubectl and Freelens with your YubiKey. Kubeconfig Vault encrypts your ex
 
 Use it on Linux or macOS with a kubeconfig that contains an inline bearer token or an embedded client certificate and private key, a verified HTTPS cluster, and a browser and security key that support WebAuthn PRF. Chrome with a USB YubiKey has been tested on Linux. Kubeconfigs that sign in through a cloud CLI or another exec plugin use a different sign-in flow. [Supported inputs](docs/INTERFACE.md#supported-kubeconfig-inputs)
 
-[Watch the one-minute walkthrough](docs/DEMO.md)
+<a href="docs/media/client-certificate.mp4?raw=true"><img src="docs/media/certificate-preview.jpg" width="440" alt="Play or download the 54-second walkthrough of kubectl and Freelens sharing one unlock"></a>
+
+[Read the transcript or see the bearer-token walkthrough](docs/DEMO.md)
 
 ## Install and set up
 
@@ -49,6 +51,6 @@ Keep the encrypted backup and the recovery key in separate safe places. Run `kub
 
 ## Compatibility
 
-Release binaries cover Linux and macOS on x86-64 and ARM64. In tests of source revision `10251d4` on all four platforms, a real Freelens window shared kubectl’s session and reconnected after locking, using a virtual security key. Linux x86-64 has also been tested with a physical USB YubiKey. Mac binaries are unnotarized. If your Mac blocks the executable, you can [build from source](docs/DEVELOPMENT.md#build-locally). Physical Mac YubiKey testing and an independent security assessment are pending. The project is experimental.
+The public v0.5.0 installer passed on Linux and macOS, on both x86-64 and ARM64. On all four platforms, real kubectl and Freelens clients shared an unlock in automated tests with a virtual security key. The available physical USB YubiKey result covers bearer tokens on Linux x86-64. Mac binaries are unnotarized. If your Mac blocks the executable, you can [build from source](docs/DEVELOPMENT.md#build-locally). Physical Mac YubiKey testing and independent security review are still open. The project is experimental.
 
 [Tested platforms and open trials](docs/COMPATIBILITY.md) · [Compare credential workflows](docs/ALTERNATIVES.md) · [Where the keys and credentials live](docs/ARCHITECTURE.md) · [CLI reference](docs/INTERFACE.md) · [Build and test](docs/DEVELOPMENT.md) · [Report a security issue](SECURITY.md)

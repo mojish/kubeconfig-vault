@@ -46,6 +46,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check links and headings in the guides
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          python3 -B ../scripts/test_doc_links.py
+          python3 -B ../scripts/check_doc_links.py
       - name: Use the same Go caches for setup and integration tests
         run: |
           printf 'GOPATH=%s/kube-unlock-go-path\nGOCACHE=%s/kube-unlock-go-cache\n' \
