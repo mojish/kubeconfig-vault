@@ -1,6 +1,7 @@
-"""Verify a published Linux installer using anonymous downloads and a disposable home."""
+"""Verify a published native installer using anonymous downloads and a disposable home."""
 import filecmp
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -13,11 +14,18 @@ from shutil import copyfileobj
 
 REPO = "mojish/kubeconfig-vault"
 BASE = f"https://github.com/{REPO}/releases"
-ARCHIVE = "kubeconfig-vault-linux-amd64.tar.gz"
 
 
 class VerificationError(Exception):
     pass
+
+
+def native_archive(system, machine):
+    systems = {"Linux": "linux", "Darwin": "darwin"}
+    cpus = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+    if system not in systems or machine not in cpus:
+        raise VerificationError(f"no published archive for {system} {machine}")
+    return f"kubeconfig-vault-{systems[system]}-{cpus[machine]}.tar.gz"
 
 
 class PublicInstall:
@@ -25,6 +33,7 @@ class PublicInstall:
         self.tag = tag
         self.root = root
         self.deadline = deadline
+        self.archive = native_archive(platform.system(), platform.machine())
         self.public_env = {"PATH": os.environ["PATH"], "HOME": str(root)}
 
     def run(self, *args, github=False):
@@ -59,9 +68,9 @@ class PublicInstall:
         self.run("gh", "release", "verify-asset", self.tag, file, "-R", REPO, github=True)
 
     def prepare(self):
-        self.get(f"{BASE}/download/{self.tag}/{ARCHIVE}", ARCHIVE)
-        self.verify(ARCHIVE)
-        with tarfile.open(self.root / ARCHIVE, "r:gz") as archive:
+        self.get(f"{BASE}/download/{self.tag}/{self.archive}", self.archive)
+        self.verify(self.archive)
+        with tarfile.open(self.root / self.archive, "r:gz") as archive:
             with archive.extractfile("kube-unlock-age") as member, (self.root / "expected").open("wb") as out:
                 copyfileobj(member, out)
 
