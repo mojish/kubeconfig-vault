@@ -36,6 +36,10 @@ class PublicInstallationTests(unittest.TestCase):
                         entry = tarfile.TarInfo("kube-unlock-age")
                         entry.size = len(self.bytes)
                         out.addfile(entry, io.BytesIO(self.bytes))
+                        canonical = tarfile.TarInfo("kubeconfig-vault")
+                        canonical.type = tarfile.LNKTYPE
+                        canonical.linkname = entry.name
+                        out.addfile(canonical)
                 else:
                     dest.write_text('set -eu\ntest -z "${GH_TOKEN:-}"\n'
                                     'cp expected "$1/kubeconfig-vault"\nchmod +x "$1/kubeconfig-vault"\n'

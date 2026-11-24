@@ -16,6 +16,9 @@ import { clientCertificateFixture } from "./test-support/client-certificate.mjs"
 import { chromeConnection } from "./test-support/cdp.mjs";
 
 const cwd = fileURLToPath(new URL(".", import.meta.url));
+const options = process.argv.slice(2);
+const fullHour = options.length === 1 && options[0] === "--one-hour-session";
+if (options.length && !fullHour) throw new Error("Expected --one-hour-session or no options");
 const root = await mkdtemp(join(tmpdir(), "kua-"));
 let state = join(root, "state");
 const legacyExecutable = join(root, "kube-unlock-age");
@@ -24,7 +27,7 @@ const launcher = join(root,"browser"), urlsFile = join(root,"urls");
 const recovery = join(root,"offline-key"), source = join(root,"source"), children = [];
 const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
 let acceptedToken = tokenA, server, certificateAPI, failure;
-const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },420000);
+const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },420000 + (fullHour ? 3600000 : 0));
 
 function launch(args, { terminal = false, program: cliProgram = executable, ...extra } = {}) {
   const command = [cliProgram, "--state-dir", state, "--browser", launcher, ...args];
@@ -296,6 +299,29 @@ try {
   const cached=JSON.parse(await cli("status"));assert.equal(cached.unlocked,true);assert.ok(Date.parse(cached.expires_at)-Date.now()>3500000);
   assert.deepEqual(await evaluate("[localStorage.length,sessionStorage.length]"),[0,0]);
   console.log("PASS: real kubectl to synthetic HTTPS API, concurrent unlock sharing, one-hour cache, empty browser storage.");
+
+  if (fullHour) {
+    const expires = Date.parse(cached.expires_at);
+    const opens = (await urls()).length;
+    for (const remainingMinutes of [50, 40, 30, 20, 10, 1]) {
+      await delay(Math.max(0, expires - remainingMinutes * 60_000 - Date.now()));
+      const request = await kube().promise;
+      assert.equal(request.code, 0, "warm kubectl request failed during the one-hour session");
+      assert.equal(JSON.parse(request.stdout).gitVersion, "v1.32.0");
+      assert.equal(JSON.parse(await cli("status")).expires_at, cached.expires_at);
+      assert.equal((await urls()).length, opens);
+      console.log(`One-hour trial: request passed with ${remainingMinutes} min remaining and the original deadline.`);
+    }
+    // Status displays whole seconds. Wait past even the nanosecond deadline.
+    await delay(Math.max(0, expires + 1500 - Date.now()));
+    assert.equal(JSON.parse(await cli("status")).fully_locked, true);
+    const first = kube(), second = kube("second");
+    await successful(first);
+    assert.equal((await second.promise).code, 0);
+    assert.equal((await urls()).length, opens + 1);
+    assert.ok(Date.parse(JSON.parse(await cli("status")).expires_at) > expires + 3500000);
+    console.log("PASS: six real requests preserved the default hour; two requests after expiry shared one fresh approval.");
+  }
 
   // A rejected browser request produces one failed unlock for two different clusters.
   await cli("lock");

@@ -17,3 +17,9 @@ The walkthrough uses captured application screens and measured results from two 
 | 0:48 | After a 61-second wait, the proxy requested a fresh credential. One new approval page opened and the authenticated request succeeded. |
 
 The refresh deadline tells a cooperating client when to ask again. The API server controls the validity of a delivered credential. An open watch or shell can outlive the local session. [Lock and refresh behavior](README.md#connect-with-kubectl-or-freelens)
+
+## Freelens with a client certificate
+
+The published v0.4.2 Linux x86-64 binary was also tested with an embedded client certificate and key. A real kubectl version request approved a session with a virtual USB authenticator. Freelens desktop 2.1.0 then displayed the namespace from a disposable mutual-TLS API. The server verified the client certificate on three namespace-list requests. The helper retained the same expiration and opened zero additional approval pages.
+
+![Freelens Namespaces view with one active namespace named vault-test on the synthetic cluster](media/freelens-mtls.png)

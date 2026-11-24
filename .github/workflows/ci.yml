@@ -5,20 +5,26 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      session_trial:
+        description: Run the full-hour session trial on one platform
+        type: choice
+        default: ordinary
+        options: [ordinary, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
   workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.session_trial || 'ordinary' }}
   cancel-in-progress: true
 
 jobs:
   test:
     name: Native tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.os == inputs.session_trial && 90 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,7 +98,11 @@ jobs:
           go build -trimpath -ldflags '-X main.version=v0.3.0' -o "$RUNNER_TEMP/kcv-previous" .
           echo "KUBE_UNLOCK_TEST_PREVIOUS_BINARY=$RUNNER_TEMP/kcv-previous" >> "$GITHUB_ENV"
       - name: Test synthetic browser and kubectl integration
+        if: matrix.os != inputs.session_trial
         run: npm run test:browser
+      - name: Verify a full-hour session with real kubectl requests
+        if: matrix.os == inputs.session_trial
+        run: npm run test:browser -- --one-hour-session
       - name: Check dependency advisories
         if: matrix.os == 'ubuntu-24.04'
         run: npm run audit:security

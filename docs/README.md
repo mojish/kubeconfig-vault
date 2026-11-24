@@ -2,6 +2,16 @@
 
 Start with [installation and setup](../README.md#install-and-set-up). Use the sample below to try validation, or jump to [connecting](#connect-with-kubectl-or-freelens), [editing](#edit-and-save), or [recovery](#choose-a-recovery-path).
 
+## Install from downloaded files
+
+Download the installer, `SHA256SUMS`, and the archive for your OS and processor from the same [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest). Keep all three in one directory. From that directory, run:
+
+```sh
+sh install.sh --from-dir .
+```
+
+The installer checks the archive and installs the binary without a network connection. If you unpack a verified archive by hand, extract the **whole archive** into an empty directory before running `./kubeconfig-vault --version`. The two executable names share the same bytes inside the tar file.
+
 ## Try a sample kubeconfig
 
 Open the [demo kubeconfig](../examples/kubeconfig.yaml) on GitHub and select **Download raw file**. In the folder where you saved it, run:

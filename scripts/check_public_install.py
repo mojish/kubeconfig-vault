@@ -71,7 +71,9 @@ class PublicInstall:
         self.get(f"{BASE}/download/{self.tag}/{self.archive}", self.archive)
         self.verify(self.archive)
         with tarfile.open(self.root / self.archive, "r:gz") as archive:
-            with archive.extractfile("kube-unlock-age") as member, (self.root / "expected").open("wb") as out:
+            # Resolve the documented executable, including its in-archive hard
+            # link in releases that store one copy under the compatibility name.
+            with archive.extractfile("kubeconfig-vault") as member, (self.root / "expected").open("wb") as out:
                 copyfileobj(member, out)
 
     def install(self, family):

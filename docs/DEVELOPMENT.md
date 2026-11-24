@@ -41,6 +41,8 @@ For an end-to-end run, install Go, Chrome, kubectl, OpenSSL, and Python 3.9+ and
 
 Set `KUBE_UNLOCK_TEST_BINARY` to test a packaged executable. `KUBE_UNLOCK_TEST_CHROME` and `KUBE_UNLOCK_TEST_KUBECTL` select specific client executables. On Linux the suite uses the installed Freelens proxy when available, otherwise `kubectl proxy`. `KUBE_UNLOCK_TEST_FREELENS_PROXY` overrides its location.
 
+To exercise the default session for a full hour on an awake machine, run `npm run test:browser -- --one-hour-session`. Six fresh kubectl processes must reach the fixture API without extending the original deadline or opening another page. After expiry, two requests must share exactly one new approval. Allow about 65 minutes. To run this on a hosted runner, open the CI workflow, choose **Run workflow**, and select one platform for the full-hour trial. The ordinary suite exercises expiry with a short session.
+
 Pull requests and pushes to main run native Go and browser tests on both CPU architectures for Linux and macOS. You can dispatch the workflow manually for a branch. The Linux ARM64 runner installs stable Chrome through Google's signed APT repository. Linux x86-64 also tests the previous binary and runs `npm run audit:security`, which checks npm and Go advisories. [CI workflow](../.github/workflows/ci.yml)
 
 ## Test with a physical YubiKey
