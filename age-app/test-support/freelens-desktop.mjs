@@ -106,7 +106,7 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
               }
             }
             clicked.set(label, Date.now());
-            stage = label;
+            stage = label === context ? "opening the test cluster" : label;
             break;
           }
         }
@@ -119,17 +119,20 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
         if (!afterFirstView) return;
         // Keep the same process open while the caller verifies renewal. A fresh
         // view must display an API response different from the initial one.
+        stage = "checking the approved session";
         const next = await afterFirstView();
         afterFirstView = undefined;
         namespace = next.namespace;
         received = next.received;
+        stage = "reloading the open desktop";
         await call("Page.reload", {ignoreCache:true}, sessionId);
         clicked.clear();
-        stage = "reloading the open desktop";
         deadline = Date.now() + 85_000;
       }
     }
     throw new Error("Freelens did not render the authenticated namespace; last stage was " + stage);
+  } catch (error) {
+    throw new Error("Freelens trial stopped while " + stage, {cause:error});
   } finally {
     signal.removeEventListener("abort", cancel);
     stopGroup("SIGTERM");

@@ -49,6 +49,8 @@ Pull requests and pushes to main run native Go and browser tests on both CPU arc
 
 Enable the Freelens desktop option when manually running CI. Each runner verifies the pinned SHA-256 digest for its official desktop package. Linux installs the Debian package on the temporary runner and uses a private virtual display. The Mac runners mount the disk image read-only. The app opens a disposable kubeconfig and profile and the test controls the window over a private process pipe. Run this desktop test on a disposable OS account or VM. A separate app profile alone does not isolate the desktop from your account. The first case keeps the same Freelens process open. Its initial namespace shares kubectl’s approval. After a lock and renewal, reloading the view must display a different namespace from the mutual-TLS API. When the full-hour option is also selected, that runner leaves the desktop open across the actual expiry and verifies six warm kubectl reads first. A separate case quits and reopens Freelens while locked. Its first request needs one approval that kubectl can then reuse. [Freelens 2.1.0 release](https://github.com/freelensapp/freelens/releases/tag/v2.1.0)
 
+If a desktop trial stops early, its log identifies the last navigation stage. A debugging timeout includes the command name and wait time. The initial namespace, renewal in the same window, and reconnect each have their own pass message.
+
 ## Test with a physical YubiKey
 
 For the real Freelens GUI and Gatekeeper on macOS, use the [Mac test protocol](MACOS.md). For a kubectl hardware run on Linux or macOS, run these from the repo root with the same browser-test prerequisites and a USB security key:

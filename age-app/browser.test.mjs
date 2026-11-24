@@ -699,6 +699,7 @@ try {
         await displayNamespace({...desktopOptions, ...observeNamespace(), afterFirstView:async () => {
           assert.equal((await urls()).length, opens);
           assert.equal(JSON.parse(await cli("status")).expires_at, session.expires_at);
+          console.log("PASS: Freelens displayed the initial mutual-TLS namespace using kubectl's existing session.");
           if (fullHour) {
             await verifyOneHour(client, "cert", "synthetic", "v1.32.1");
           } else {

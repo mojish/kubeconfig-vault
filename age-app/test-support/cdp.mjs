@@ -39,7 +39,7 @@ export function devtoolsPipe(child, {recordEvents = false, timeoutMs = 0} = {}) 
       const id = ++sequence;
       const timer = timeoutMs && setTimeout(() => {
         pending.delete(id);
-        reject(new Error("Timed out waiting for browser debugging command"));
+        reject(new Error(`Browser debugging command ${method} timed out after ${timeoutMs} ms`));
       }, timeoutMs);
       pending.set(id, {resolve, reject, timer});
       child.stdio[3].write(JSON.stringify({id, method, params, ...(sessionId ? {sessionId} : {})}) + "\0");
