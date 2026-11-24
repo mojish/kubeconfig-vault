@@ -439,8 +439,40 @@ try {
   assert.equal((await urls()).length,pagesBeforeBadEdit);
   assert.equal(await readFile(edit,"utf8"),badEdit);
   assert.deepEqual(await readFile(join(state,"current","vault.age")),initialGeneration);assert.ok(await stat(edit));
-  sourceObject.users[0].user.token=tokenB;await writeFile(edit,JSON.stringify(sourceObject,null,2),{mode:0o600});
-  await successful(launch(["config","lock"]));acceptedToken=tokenB;
+  sourceObject.users[0].user.token=tokenB;
+  const revised = JSON.stringify(sourceObject,null,2);
+  await writeFile(edit,revised,{mode:0o600});
+  const beforeCrash = (await urls()).length;
+  const interruptedSave = launch(["config","lock"]);
+  await waitFor(async () => (await urls()).length === beforeCrash + 1, "save waiting for fresh approval");
+  navigated = beforeCrash + 1; // Leave this ceremony unanswered.
+  const terminated = once(daemon,"exit");
+  assert.ok(daemon.kill("SIGKILL"));
+  assert.equal((await terminated)[1],"SIGKILL");
+  assert.notEqual((await interruptedSave.promise).code,0);
+  const stopped = JSON.parse(await cli("status","--json"));
+  assert.equal(stopped.helper_running,false);
+  assert.equal(stopped.fully_locked,false);
+  assert.equal(stopped.edit_path,edit);
+  assert.equal(await readFile(edit,"utf8"),revised);
+  const preSaveBackup = join(root,"before-interrupted-save.age");
+  await cli("backup",preSaveBackup);
+  assert.deepEqual(await readFile(preSaveBackup),initialGeneration);
+  // Let the ordinary retry start a new helper. Stop this detached process
+  // even on failure before returning to the suite's foreground helper.
+  try {
+    await successful(launch(["config","lock"]));
+    assert.equal((await urls()).length,beforeCrash + 2);
+    acceptedToken=tokenB;
+  } finally {
+    await cli("stop");
+  }
+  await waitFor(async () => {
+    const result = await launch(["status","--json"]).promise;
+    return result.code === 0 && !JSON.parse(result.stdout).helper_running;
+  }, "retried helper to stop");
+  daemon = await startDaemon();
+  console.log("PASS: a killed save preserved the plaintext edit and previous backup; a normal retry restarted the helper and required fresh approval.");
   const savedProjection = await readFile(generatedConfig, "utf8");
   assert.equal(kubectlConfig("current-context"), "second");
   assert.equal(kubectlConfig("view","--minify","-o","jsonpath={.contexts[0].context.namespace}"), "vault-test");
