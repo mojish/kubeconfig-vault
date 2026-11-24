@@ -77,7 +77,7 @@ Repair requires an already linked client, a missing generated file, readable enc
 | Option | Meaning |
 | --- | --- |
 | `--version` | Print the packaged release version. Source builds normally report `dev`. |
-| `--state-dir PATH` | Choose a private state directory. Defaults to `~/.local/share/kube-unlock-age` on Linux or `~/Library/Application Support/kube-unlock-age` on macOS. Long paths can exceed the OS Unix socket limit. |
+| `--state-dir PATH` | Choose a private state directory. Defaults to `~/.local/share/kube-unlock-age` on Linux or `~/Library/Application Support/kube-unlock-age` on macOS. If the full socket path is too long, setup reports it before asking for a recovery key. Choose a shorter private path. |
 | `--session-seconds N` | Set the absolute session lifetime for a new helper. Range 1–3600. Default 3600. |
 | `--browser PATH` | Choose a browser launcher executable with no arguments. Defaults to `xdg-open` on Linux and `open` on macOS. The launcher must accept a private local HTML file and follow its redirect to localhost. |
 

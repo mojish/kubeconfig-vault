@@ -124,7 +124,7 @@ try {
   const missingConfig = await launch(["path", "kubeconfig"]).promise;
   assert.equal(missingConfig.code, 1);
   assert.equal(missingConfig.stdout, "");
-  assert.match(missingConfig.stderr, /run import first/);
+  assert.match(missingConfig.stderr, previous ? /run import first/ : /kubeconfig-vault setup/);
   await assert.rejects(stat(state), { code: "ENOENT" });
   const prematureLink = await launch(["config", "link", "--kubeconfig", source]).promise;
   assert.equal(prematureLink.code, 1);

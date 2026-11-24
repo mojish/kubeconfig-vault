@@ -23,7 +23,18 @@ import (
 )
 
 func (s *service) socket() string { return filepath.Join(s.state, "session.sock") }
+
+func (s *service) checkSocketPath() error {
+	if len(s.socket()) >= len(unix.RawSockaddrUnix{}.Path) {
+		return errors.New("vault path is too long for a local socket; choose a shorter private directory with --state-dir")
+	}
+	return nil
+}
+
 func (s *service) serve() error {
+	if err := s.checkSocketPath(); err != nil {
+		return err
+	}
 	if err := privateDir(s.state); err != nil {
 		return err
 	}
@@ -134,6 +145,13 @@ func (s *service) serve() error {
 }
 
 func (s *service) connect(deadline time.Time) (*net.UnixConn, error) {
+	info, err := os.Lstat(s.socket())
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return nil, errors.New("invalid helper socket; unexpected file preserved")
+	}
 	dialer := net.Dialer{Deadline: deadline}
 	conn, err := dialer.Dial("unix", s.socket())
 	if err != nil {
@@ -147,17 +165,34 @@ func (s *service) connect(deadline time.Time) (*net.UnixConn, error) {
 	return c, nil
 }
 func (s *service) rpc(r request) (json.RawMessage, error) {
-	c, err := s.connect(time.Time{})
+	if err := s.checkSocketPath(); err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(s.state); errors.Is(err, os.ErrNotExist) {
+		switch r.Op {
+		case "setup", "restore", "import":
+			// The first helper creates its private state directory.
+		case "config-discard":
+			return json.Marshal(s.status())
+		default:
+			return nil, errors.New("no vault in this directory; run kubeconfig-vault setup first")
+		}
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	c, err := s.connect(deadline)
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ECONNREFUSED) {
+			return nil, fmt.Errorf("cannot connect to the private helper: %w", err)
+		}
 		cmd := exec.Command(s.executable, "--state-dir", s.state, "--session-seconds", fmt.Sprint(int(s.ttl.Seconds())), "--browser", s.browser, "serve")
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err = cmd.Start(); err != nil {
 			return nil, errors.New("cannot start private daemon")
 		}
 		go func() { _ = cmd.Wait() }()
-		for i := 0; i < 100; i++ {
+		for time.Now().Before(deadline) {
 			time.Sleep(30 * time.Millisecond)
-			c, err = s.connect(time.Time{})
+			c, err = s.connect(deadline)
 			if err == nil {
 				break
 			}
@@ -206,13 +241,13 @@ func printPath(state string, args []string) error {
 	switch args[0] {
 	case "kubeconfig":
 		name = filepath.Join(state, "current", "kubeconfig")
-		missing = "no generated kubeconfig; run import first"
+		missing = "no generated kubeconfig; run kubeconfig-vault status, or kubeconfig-vault setup for a new vault"
 	case "edit":
 		name = filepath.Join(state, "edit", "kubeconfig")
 		missing = "no editable kubeconfig; run config unlock or check status for an interrupted edit"
 	case "vault":
 		name = filepath.Join(state, "current", "vault.age")
-		missing = "no encrypted vault; run import first"
+		missing = "no encrypted vault at this path; run kubeconfig-vault status, or kubeconfig-vault setup for a new vault"
 	default:
 		return errors.New(usage)
 	}
@@ -387,8 +422,13 @@ func run(args []string) error {
 	if a[0] == "setup" {
 		return s.setupCommand(a[1:])
 	}
-	if err = privateDir(*state); err != nil {
+	if err = checkPrivateDir(*state); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	if a[0] == "import" || a[0] == "restore" {
+		if err := s.checkSocketPath(); err != nil {
+			return err
+		}
 	}
 	if a[0] == "serve" {
 		if len(a) != 1 {

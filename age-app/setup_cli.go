@@ -121,6 +121,9 @@ func (s *service) startSetup(path, recoveryFile string) error {
 		if err := s.validateInput(path, entry); err != nil {
 			return err
 		}
+		if err := s.checkSocketPath(); err != nil {
+			return err
+		}
 		if present, err := existsEntry(entry + configBackupSuffix); err != nil || present {
 			return errors.New("original backup already exists; locate its vault before setup")
 		}
