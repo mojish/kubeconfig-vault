@@ -113,6 +113,14 @@ jobs:
         with:
           go-version-file: age-app/go.mod
           cache: false
+      - name: Check the source commit embedded in the installed binary
+        shell: bash
+        run: |
+          go version -m -json "$RUNNER_TEMP/kcv bin/kubeconfig-vault" |
+            jq -e --arg commit "$GITHUB_SHA" '
+              .Settings | from_entries |
+              .vcs == "git" and .["vcs.revision"] == $commit and .["vcs.modified"] == "false"
+            '
       - uses: ./.github/actions/browser-clients
       - name: Exercise the packaged CLI with virtual USB authentication and kubectl
         working-directory: age-app
