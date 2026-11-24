@@ -1,5 +1,6 @@
 // Manual hardware qualification. No DevTools, virtual authenticator, or real config.
 import assert from "node:assert/strict";
+import { dummyAPI } from "./test-support/dummy-api.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -96,35 +97,6 @@ async function stop(child) {
   if (child.exitCode === null && child.signalCode === null) {
     child.kill("SIGKILL");
     await exited;
-  }
-}
-
-// Provide only the discovery and resources the volunteer needs to see one namespace.
-function dummyAPI(method, path) {
-  switch (method + " " + path) {
-  case "GET /version":
-    return { major: "1", minor: "32", gitVersion: "v1.32.0" };
-  case "GET /api":
-    return { apiVersion: "v1", kind: "APIVersions", versions: ["v1"], serverAddressByClientCIDRs: [] };
-  case "GET /apis":
-    return { apiVersion: "v1", kind: "APIGroupList", groups: [] };
-  case "GET /api/v1":
-    return { apiVersion: "v1", kind: "APIResourceList", groupVersion: "v1",
-      resources: [{ name: "namespaces", singularName: "namespace", kind: "Namespace", namespaced: false, verbs: ["get", "list"] },
-        { name: "nodes", singularName: "node", kind: "Node", namespaced: false, verbs: ["get", "list"] }] };
-  case "GET /api/v1/namespaces":
-    return { apiVersion: "v1", kind: "NamespaceList", metadata: { resourceVersion: "1" },
-      items: [{ apiVersion: "v1", kind: "Namespace", metadata: { name: "vault-test", uid: "vault-test", resourceVersion: "1" },
-        status: { phase: "Active" } }] };
-  case "GET /api/v1/nodes":
-    return { apiVersion: "v1", kind: "NodeList", metadata: { resourceVersion: "1" }, items: [] };
-  case "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews":
-    return { apiVersion: "authorization.k8s.io/v1", kind: "SelfSubjectAccessReview", status: { allowed: true } };
-  case "POST /apis/authorization.k8s.io/v1/selfsubjectrulesreviews":
-    return { apiVersion: "authorization.k8s.io/v1", kind: "SelfSubjectRulesReview",
-      status: { resourceRules: [{ verbs: ["*"], apiGroups: ["*"], resources: ["*"] }], nonResourceRules: [], incomplete: false } };
-  default:
-    return undefined;
   }
 }
 
