@@ -1,6 +1,6 @@
 # Verify a release on a Mac
 
-This is a volunteer test for a **physical USB YubiKey and the Freelens desktop app**. It answers two questions the hosted tests cannot settle. Will Gatekeeper allow the downloaded binary to run on first launch? Can the desktop app unlock the vault, read a namespace, and reconnect after locking?
+This is a volunteer test for a **physical USB YubiKey and the Freelens desktop app**. It checks how a browser download behaves on your Mac, then verifies that Freelens can unlock, read a namespace and reconnect using your physical key. Hosted Mac runners have exercised the desktop with a virtual authenticator. [Current evidence](COMPATIBILITY.md)
 
 Use a fresh macOS account, leave the YubiKey plugged in, and set Chrome as the default browser. Install Freelens, kubectl, OpenSSL and Node.js 22.12 or later. Quit Freelens with Command-Q before starting. The script creates a temporary kubeconfig, recovery key, Freelens profile and local test API. Keep personal clusters and synced browser accounts out of the test account.
 
