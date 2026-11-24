@@ -267,6 +267,21 @@ try {
     assert.equal(result.status, 0, "synthetic kubectl config command failed");
     return result.stdout.trim();
   }
+  // An independently imported client can retain settings from before a save.
+  const staleClient = join(root, "stale-client");
+  await copyFile(generatedConfig, staleClient);
+  const staleSettings = spawnSync(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl",
+    ["--kubeconfig", staleClient, "config", "set-cluster", "synthetic", "--tls-server-name=old.example.invalid"]);
+  assert.equal(staleSettings.status, 0);
+  const pagesBeforeStale = (await urls()).length;
+  const stale = await kube("synthetic", staleClient).promise;
+  assert.notEqual(stale.code, 0);
+  assert.match(stale.stderr, /credential is not approved for this cluster/);
+  assert.equal((await urls()).length, pagesBeforeStale);
+  const afterStale = JSON.parse(await cli("status"));
+  assert.equal(afterStale.unlocked, false);
+  assert.equal(afterStale.automatic_unlock_paused_until, undefined);
+  console.log("PASS: a stale kubectl config failed before opening the browser; the next approved client could unlock normally.");
   const before=(await urls()).length,first=kube(),second=kube("second");
   assert.equal(JSON.parse((await successful(first)).stdout).gitVersion,"v1.32.0");assert.equal((await second.promise).code,0);
   assert.equal((await urls()).length,before+1);
