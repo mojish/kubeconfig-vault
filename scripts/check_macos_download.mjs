@@ -94,11 +94,11 @@ async function observe() {
   const archiveMarked = marked(archive);
   console.log(`Browser download ${tag} darwin-${cpu}: verified; archive quarantine=${archiveMarked}`);
   const open = run("/usr/bin/open", ["-a","Archive Utility",archive]);
-  if (open.status !== 0) { console.log("Inconclusive: the hosted desktop could not open Archive Utility."); return; }
+  if (open.status !== 0) return "INCONCLUSIVE — the hosted desktop could not open Archive Utility";
   const deadline = Date.now() + 45000;
   let binary;
   while (Date.now() < deadline && !binary) { binary = await expandedBinary(expected); if (!binary) await delay(350); }
-  if (!binary) { console.log("Inconclusive: Archive Utility did not produce the verified executable in Downloads."); return; }
+  if (!binary) return "INCONCLUSIVE — Archive Utility did not produce the verified executable in Downloads";
   const binaryMarked = marked(binary);
   const enabled = run("/usr/sbin/spctl", ["--status"]).stdout?.trim() || "unreported";
   console.log(`Before first launch: binary quarantine=${binaryMarked}; Gatekeeper status=${enabled}`);
@@ -106,13 +106,15 @@ async function observe() {
   let outcome;
   if (first.status === 0) {
     if (first.stdout.trim() !== "kubeconfig-vault " + tag) throw new Error("Unexpected version from verified first launch");
-    outcome = "reported the expected version";
-  } else outcome = `did not complete (status=${first.status}, signal=${first.signal})`;
-  console.log("First command-line launch " + outcome + ".");
+    outcome = "VERSION VERIFIED — the first invocation of this extracted copy reported its release version";
+  } else if (first.error) {
+    outcome = "LAUNCH INCOMPLETE — " + (first.error.code || "process could not run");
+  } else outcome = `LAUNCH INCOMPLETE — exit=${first.status}, signal=${first.signal}`;
   const assessment = run("/usr/sbin/spctl", ["--assess","--type","execute",binary]);
   console.log(`Subsequent system assessment exit=${assessment.status}, signal=${assessment.signal}.`);
   if (!binaryMarked || enabled !== "assessments enabled") console.log("Normal Gatekeeper first-launch enforcement remains unverified.");
+  return outcome;
 }
 
-try { await observe(); }
+try { console.log("Hosted observation:", await observe()); }
 finally { await rm(root, {recursive:true, force:true, maxRetries:4}); }
