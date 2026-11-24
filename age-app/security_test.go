@@ -32,7 +32,7 @@ contexts:
 current-context: demo
 `
 
-func samplePayload(t *testing.T) (*payload, *age.HybridIdentity) {
+func samplePayload(t testing.TB) (*payload, *age.HybridIdentity) {
 	t.Helper()
 	p, e := prepare([]byte(synthetic), t.TempDir(), "/synthetic/state", "/synthetic/helper", nil)
 	if e != nil {
@@ -45,7 +45,7 @@ func samplePayload(t *testing.T) (*payload, *age.HybridIdentity) {
 	p.Meta = metadata{1, "AGE-PLUGIN-FIDO2PRF-1synthetic", k.Recipient().String()}
 	return p, k
 }
-func privateTemp(t *testing.T) string {
+func privateTemp(t testing.TB) string {
 	t.Helper()
 	p := t.TempDir()
 	if e := os.Chmod(p, 0700); e != nil {

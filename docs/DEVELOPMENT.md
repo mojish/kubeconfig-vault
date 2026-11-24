@@ -19,7 +19,7 @@ This leaves a development binary in `age-app/`. To install from a checkout, run 
 
 ## Run the checks
 
-To measure how edit saves reconcile context and namespace choices, run `go test -run '^$' -bench BenchmarkPreserveSelections -benchmem` in `age-app/` after building the browser assets. The benchmark covers 10, 100 and 1,000 disposable contexts.
+After building the browser assets, run the Go benchmarks from `age-app/`. `go test -run '^$' -bench 'Benchmark(PreserveSelections|WarmCredentialDelivery)' -benchmem` measures saving existing context selections and delivering a cached credential with 10, 100, and 1,000 contexts. The warm-delivery fixture shares one cluster and credential across its contexts and includes the helper’s filesystem checks.
 
 From `age-app/`, after building the browser assets:
 
