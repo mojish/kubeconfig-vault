@@ -7,8 +7,9 @@ const decline = document.querySelector("#decline");
 const encode = bytes => btoa(String.fromCharCode(...bytes));
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 let active = null, busy = false, finished = false, polling = false, revision = 0;
-let enrolled = false;
+let enrolled = false, timer;
 function finish(text) {
+  clearInterval(timer);
   finished = true; revision++; capability = ""; active = null;
   decline.disabled = button.disabled = true; button.textContent = "Session closed"; message.textContent = text;
 }
@@ -27,7 +28,8 @@ async function poll() {
     const page = await api("/api/poll", {});
     // A request started before a click/failure must not restore the old step.
     if (busy || finished || expected !== revision) return;
-    document.querySelector("#title").textContent = page.title;
+    const title = document.querySelector("#title");
+    if (title.textContent !== page.title) title.textContent = page.title;
     if (page.done) {
       const success = enrolled
         ? "Vault verified. Its non-discoverable credential normally stays hidden in Yubico Authenticator’s Passkeys list. You can close this page."
@@ -35,13 +37,17 @@ async function poll() {
       finish(page.success ? success : "Operation failed. Check the terminal for the result.");
       button.textContent = page.success ? "Completed" : "Operation failed";
     } else if (page.request) {
+      if (active?.id === page.request.id) return;
       active = page.request; decline.disabled = button.disabled = false;
       progress.textContent = `Step ${active.step} of ${active.total}`;
       button.textContent = ({enroll:"Set up security key",wrap:"Protect the vault",unwrap:active.total > 1 && active.step === active.total ? "Verify the encrypted vault" : "Unlock with security key"})[active.op];
       message.textContent = ({enroll:"Create a credential on your YubiKey.",wrap:"Protect this new vault generation with your YubiKey.",unwrap:"Authenticate with your YubiKey to decrypt and verify this vault."})[active.op];
-    } else { active = null; decline.disabled = button.disabled = true; button.textContent = "Checking…"; message.textContent = "Waiting for the local application…"; }
+    } else {
+      active = null; decline.disabled = button.disabled = true; button.textContent = "Checking…";
+      if (message.textContent !== "Waiting for the local application…") message.textContent = "Waiting for the local application…";
+    }
   } catch {
-    if (!busy && !finished && expected === revision) finish("Local session closed or did not respond. Check the terminal for the operation result.");
+    if (!busy && !finished && expected === revision) finish("This page can no longer reach the vault. Check the result in your terminal or Kubernetes app before starting again.");
   } finally { polling = false; }
 }
 decline.addEventListener("click", async () => {
@@ -86,4 +92,4 @@ button.addEventListener("click", async () => {
   await poll();
 });
 if (!/^[a-f0-9]{64}$/.test(capability)) finish("Start an operation from kubeconfig-vault to open a new authentication page.");
-else { await poll(); setInterval(poll, 300); }
+else { await poll(); if (!finished) timer = setInterval(poll, 300); }

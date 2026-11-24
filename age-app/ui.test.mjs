@@ -16,13 +16,23 @@ async function harness() {
   const context = vm.createContext({document:{querySelector:id=>elements[id]},location:{hash:"#"+"a".repeat(64)},history:{replaceState(){}},
     webauthn:{createCredential:()=>auth.promise},Stanza:class{},Uint8Array,AbortSignal,setTimeout,clearTimeout,
     btoa:s=>Buffer.from(s,"binary").toString("base64"),atob:s=>Buffer.from(s,"base64").toString("binary"),
-    setInterval:cb=>{interval=cb},fetch:(url,options)=>{const d=deferred();waiting.push({url,options,...d});return d.promise},
+    setInterval:cb=>{interval=cb;return 1},clearInterval:()=>{interval=undefined},
+    fetch:(url,options)=>{const d=deferred();waiting.push({url,options,...d});return d.promise},
   });
   const running = new vm.Script("(async()=>{"+source+"})()").runInContext(context);
   const respond = (request,value,ok=true) => request.resolve({ok,json:async()=>structuredClone(value)});
   respond(waiting.shift(),page); await running;
-  return {elements,auth,waiting,respond,poll:()=>interval()};
+  return {elements,auth,waiting,respond,poll:()=>interval?.(),polling:()=>Boolean(interval)};
 }
+
+test("an unchanged step leaves the live status announcement in place",async()=>{
+  const h=await harness(), status=h.elements["#message"], text=status.textContent;
+  let writes=0;
+  Object.defineProperty(status,"textContent",{get:()=>text,set:()=>{writes++}});
+  const repeat=h.poll();h.respond(h.waiting.shift(),page);await repeat;
+  assert.equal(writes,0);
+  assert.equal(h.polling(),true);
+});
 
 test("a slow poll cannot re-enable the button during a security-key request",async()=>{
   const h=await harness();const poll=h.poll(),old=h.waiting.shift();
@@ -71,4 +81,5 @@ test("verified enrollment explains where to find the credential",async()=>{
   h.respond(h.waiting.shift(),{title:page.title,done:true,success:true});
   await click;
   assert.match(h.elements["#message"].textContent,/non-discoverable credential/);
+  assert.equal(h.polling(),false);
 });

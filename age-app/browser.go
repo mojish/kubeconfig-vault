@@ -57,6 +57,7 @@ type ceremony struct {
 	server        *http.Server
 	mu            sync.Mutex
 	page          browserPage
+	finalTimer    *time.Timer // protected by mu
 	reply         chan browserMessage
 	cap           string
 	origin        string
@@ -162,7 +163,12 @@ func (c *ceremony) serve(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Invalid request", 400)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(c.page)
+			if err := json.NewEncoder(w).Encode(c.page); err == nil && c.finalTimer != nil {
+				// The final result reached an authorized poll. Leave time for
+				// this response to finish, then close even if the tab polls again.
+				c.finalTimer.Reset(1500 * time.Millisecond)
+				c.finalTimer = nil
+			}
 			return
 		}
 		var reply browserMessage
@@ -237,8 +243,11 @@ func (c *ceremony) finish(success bool) {
 	c.page.Request = nil
 	c.page.Done = true
 	c.page.Success = success
+	// Background tabs can poll late. At this point only the final status
+	// is available. Pending authentication still uses its original timeout.
+	c.finalTimer = time.AfterFunc(30*time.Second, c.cancel)
 	c.mu.Unlock()
-	time.AfterFunc(1500*time.Millisecond, c.cancel)
+	c.removeBootstrap()
 }
 
 type browserKey struct {
