@@ -117,6 +117,31 @@ func TestExpandedCARejectedBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestSelectedCAFileAndSharedBudget(t *testing.T) {
+	dir := privateTemp(t)
+	path := filepath.Join(dir, "ca.pem")
+	if err := writeNew(path, nil); err != nil {
+		t.Fatal(err)
+	}
+	fromFile := cluster{CAFile: "ca.pem"}
+	if _, err := embedClusterCA(&fromFile, dir, maxSource); err == nil {
+		t.Fatal("empty selected CA file accepted as system trust")
+	}
+	cert, _ := auditCertificate(t)
+	if err := os.WriteFile(path, cert, 0600); err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(cert)
+	used, err := embedClusterCA(&fromFile, dir, len(encoded))
+	if err != nil || used != len(encoded) || fromFile.CA != encoded || fromFile.CAFile != "" {
+		t.Fatal("valid file did not fit its exact budget")
+	}
+	inline := cluster{CA: encoded}
+	if _, err := embedClusterCA(&inline, dir, used-1); err == nil {
+		t.Fatal("second cluster exceeded the remaining budget")
+	}
+}
+
 func TestCommitReaderLimitsPreserveCurrent(t *testing.T) {
 	for _, kind := range []string{"projection", "portable", "metadata", "invalid-metadata"} {
 		t.Run(kind, func(t *testing.T) {
