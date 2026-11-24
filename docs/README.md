@@ -14,17 +14,17 @@ The installer checks the archive and installs the binary without a network conne
 
 ### Verify the downloaded release
 
-Use a current, signed-in GitHub CLI while online. In a directory containing just the three downloads, set the tag to the release you selected and run:
+Use a current, signed-in GitHub CLI while online. To verify a download from the latest release, open the directory containing just the three files and run
 
 ```sh
-tag=v0.5.0
 repo=mojish/kubeconfig-vault
-gh release verify-asset "$tag" install.sh --repo "$repo" &&
+tag=$(gh release view --repo "$repo" --json tagName --jq .tagName) &&
+  gh release verify-asset "$tag" install.sh --repo "$repo" &&
   gh release verify-asset "$tag" SHA256SUMS --repo "$repo" &&
   gh release verify-asset "$tag" kubeconfig-vault-*.tar.gz --repo "$repo"
 ```
 
-Continue when all three files verify. GitHub checks the local bytes against the signed record for that release. You can then move the verified files to the offline machine. [GitHub release verification](https://cli.github.com/manual/gh_release_verify-asset)
+If you downloaded a specific version, set `tag` to the tag on its download page. Continue when all three files verify. GitHub checks their bytes against the signed record for that release. You can then move the verified files to the offline machine. [GitHub release verification](https://cli.github.com/manual/gh_release_verify-asset)
 
 ## Try a sample kubeconfig
 
