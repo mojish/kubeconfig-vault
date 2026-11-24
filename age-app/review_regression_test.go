@@ -487,6 +487,26 @@ func TestBackgroundTabCanReadCompletionAndCloseListener(t *testing.T) {
 		!page.Done || !page.Success || page.Request != nil {
 		t.Fatal("expected only the successful final state")
 	}
+	// A stale poll can receive Done without the tab displaying it. Only an
+	// explicit acknowledgment from the UI should shorten the receipt window.
+	select {
+	case <-c.ctx.Done():
+		t.Fatal("an unacknowledged poll shortened the receipt window")
+	case <-time.After(2 * time.Second):
+	}
+	ack, err := http.NewRequest(http.MethodPost, c.origin+"/api/poll", strings.NewReader(`{"displayed":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack.Header = req.Header.Clone()
+	confirmed, err := (&http.Client{Timeout: 2 * time.Second}).Do(ack)
+	if err != nil {
+		t.Fatal("display acknowledgment failed")
+	}
+	confirmed.Body.Close()
+	if confirmed.StatusCode != http.StatusOK {
+		t.Fatal("display acknowledgment was rejected")
+	}
 	select {
 	case <-c.ctx.Done():
 	case <-time.After(5 * time.Second):

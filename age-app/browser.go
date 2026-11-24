@@ -159,16 +159,21 @@ func (c *ceremony) serve(w http.ResponseWriter, r *http.Request) {
 		defer c.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/poll" {
+			if string(b) == `{"displayed":true}` && c.page.Done {
+				// A stale poll may have received Done just before a UI action
+				// superseded it. Shorten the window only once the page renders it.
+				if c.finalTimer != nil {
+					c.finalTimer.Reset(1500 * time.Millisecond)
+					c.finalTimer = nil
+				}
+				w.Write([]byte("{}"))
+				return
+			}
 			if string(b) != "{}" {
 				http.Error(w, "Invalid request", 400)
 				return
 			}
-			if err := json.NewEncoder(w).Encode(c.page); err == nil && c.finalTimer != nil {
-				// The final result reached an authorized poll. Leave time for
-				// this response to finish, then close even if the tab polls again.
-				c.finalTimer.Reset(1500 * time.Millisecond)
-				c.finalTimer = nil
-			}
+			_ = json.NewEncoder(w).Encode(c.page)
 			return
 		}
 		var reply browserMessage

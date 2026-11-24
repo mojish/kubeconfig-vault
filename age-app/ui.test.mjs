@@ -82,4 +82,31 @@ test("verified enrollment explains where to find the credential",async()=>{
   await click;
   assert.match(h.elements["#message"].textContent,/non-discoverable credential/);
   assert.equal(h.polling(),false);
+  const ack = h.waiting.shift();
+  assert.equal(ack.url,"/api/poll");
+  assert.deepEqual(JSON.parse(ack.options.body),{displayed:true});
+  h.respond(ack,{});
+});
+
+test("a stale completion poll waits for the active page to display the result", async () => {
+  const h = await harness();
+  const done = {title:page.title, done:true, success:true};
+  const stale = h.poll();
+  const oldRequest = h.waiting.shift();
+  const click = h.elements["#continue"].click();
+  h.respond(oldRequest, done);
+  await stale;
+  assert.equal(h.waiting.length, 0);
+  assert.equal(h.polling(), true);
+
+  h.auth.resolve("synthetic-identity");
+  await tick();
+  h.respond(h.waiting.shift(), {});
+  await tick();
+  h.respond(h.waiting.shift(), done);
+  await click;
+  assert.equal(h.elements["#continue"].textContent, "Completed");
+  const receipt = h.waiting.shift();
+  assert.deepEqual(JSON.parse(receipt.options.body), {displayed:true});
+  h.respond(receipt, {});
 });

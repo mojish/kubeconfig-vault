@@ -8,10 +8,12 @@ const encode = bytes => btoa(String.fromCharCode(...bytes));
 const decode = text => Uint8Array.from(atob(text), c => c.charCodeAt(0));
 let active = null, busy = false, finished = false, polling = false, revision = 0;
 let enrolled = false, timer;
-function finish(text) {
+function finish(text, displayed = false) {
   clearInterval(timer);
-  finished = true; revision++; capability = ""; active = null;
+  finished = true; revision++; active = null;
   decline.disabled = button.disabled = true; button.textContent = "Session closed"; message.textContent = text;
+  if (displayed) void api("/api/poll", {displayed:true}).catch(() => {});
+  capability = "";
 }
 async function api(path, value) {
   const response = await fetch(path, { method: "POST", credentials: "omit", cache: "no-store",
@@ -34,7 +36,7 @@ async function poll() {
       const success = enrolled
         ? "Vault verified. Its non-discoverable credential normally stays hidden in Yubico Authenticator’s Passkeys list. You can close this page."
         : "Finished. You can close this page and return to your application.";
-      finish(page.success ? success : "Operation failed. Check the terminal for the result.");
+      finish(page.success ? success : "Operation failed. Check the terminal for the result.", true);
       button.textContent = page.success ? "Completed" : "Operation failed";
     } else if (page.request) {
       if (active?.id === page.request.id) return;
