@@ -30,13 +30,38 @@ func TestPassiveStatusAbsentVault(t *testing.T) {
 
 func TestEndSessionBeforeSetupCreatesNothing(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "new")
-	for _, op := range []string{"lock", "stop"} {
-		if err := run([]string{"--state-dir", state, op}); err != nil {
-			t.Fatalf("%s before setup: %v", op, err)
+	for _, args := range [][]string{{"lock"}, {"lock", "--json"}, {"stop"}, {"stop", "--json"}} {
+		if err := run(append([]string{"--state-dir", state}, args...)); err != nil {
+			t.Fatalf("%v before setup: %v", args, err)
 		}
 		if _, err := os.Lstat(state); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("%s created vault state: %v", op, err)
+			t.Fatalf("%v created vault state: %v", args, err)
 		}
+	}
+}
+
+func TestEndSessionReportsPlaintextAndUncertainState(t *testing.T) {
+	const edit = "/fixture/edit/kubeconfig"
+	tests := []struct {
+		name  string
+		state clientStatus
+		want  string
+	}{
+		{"fully locked", clientStatus{FullyLocked: true}, "Session locked."},
+		{"normal edit", clientStatus{EditOpen: true, EditPath: edit, EditPaths: []string{edit}}, "config lock to encrypt"},
+		{"single path from older helper", clientStatus{EditOpen: true, EditPath: edit}, "config lock to encrypt"},
+		{"interrupted", clientStatus{EditOpen: true, EditPath: edit, EditPaths: []string{edit, "/fixture/edit/saving"}}, "each file"},
+		{"unreadable directory", clientStatus{Problems: []string{"unsafe edit directory"}}, "Could not confirm"},
+		{"unconfirmed state", clientStatus{}, "Could not confirm"},
+		{"concurrent unlock", clientStatus{Unlocked: true}, "session is active"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			message := tt.state.endSessionMessage(edit)
+			if !strings.Contains(message, tt.want) {
+				t.Fatalf("output %q should explain %q", message, tt.want)
+			}
+		})
 	}
 }
 
@@ -120,7 +145,7 @@ func TestEndSessionWithAbandonedSocket(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.endSession("lock"); err != nil {
+	if err := s.endSession("lock", true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.inspectStatus()
@@ -138,7 +163,7 @@ func TestEndSessionWithAbandonedSocket(t *testing.T) {
 	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.endSession("stop"); err == nil {
+	if err := s.endSession("stop", true); err == nil {
 		t.Fatal("reported a stopped session while its daemon lock was held")
 	}
 	if got, err := s.inspectStatus(); err == nil || got.FullyLocked {
