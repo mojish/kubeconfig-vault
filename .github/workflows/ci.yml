@@ -15,13 +15,16 @@ on:
         description: Exercise the actual Freelens desktop on each native runner
         type: boolean
         default: false
+      published_release:
+        description: Optional published tag to use for the client integration tests (for example v0.5.0)
+        type: string
   workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.session_trial || 'ordinary' }}-${{ inputs.freelens_desktop || false }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.session_trial || 'ordinary' }}-${{ inputs.freelens_desktop || false }}-${{ inputs.published_release }}
   cancel-in-progress: true
 
 jobs:
@@ -137,6 +140,31 @@ jobs:
           npm run build:web
           go build -trimpath -ldflags '-X main.version=v0.3.0' -o "$RUNNER_TEMP/kcv-previous" .
           echo "KUBE_UNLOCK_TEST_PREVIOUS_BINARY=$RUNNER_TEMP/kcv-previous" >> "$GITHUB_ENV"
+      - name: Install the selected public release for the client tests
+        if: inputs.published_release != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.published_release }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a release tag such as v0.5.0' >&2; exit 1; }
+          os=linux
+          if [[ "$RUNNER_OS" == macOS ]]; then os=darwin; fi
+          case "$RUNNER_ARCH" in
+            ARM64) cpu=arm64 ;;
+            X64) cpu=amd64 ;;
+            *) echo "Unsupported runner architecture: $RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          archive="kubeconfig-vault-$os-$cpu.tar.gz"
+          dir=$(mktemp -d "$RUNNER_TEMP/kcv-published.XXXXXX")
+          gh release download "$TAG" -R mojish/kubeconfig-vault -D "$dir" -p "$archive" -p SHA256SUMS -p install.sh
+          for file in "$archive" SHA256SUMS install.sh; do
+            gh release verify-asset "$TAG" "$dir/$file" -R mojish/kubeconfig-vault
+          done
+          unset GH_TOKEN
+          sh "$dir/install.sh" --from-dir "$dir" "$dir/bin"
+          binary="$dir/bin/kubeconfig-vault"
+          [[ "$("$binary" --version)" == "kubeconfig-vault $TAG" ]]
+          printf 'KUBE_UNLOCK_TEST_BINARY=%s\n' "$binary" >> "$GITHUB_ENV"
       - name: Test synthetic browser and kubectl integration
         env:
           FULL_HOUR: ${{ matrix.os == inputs.session_trial }}
