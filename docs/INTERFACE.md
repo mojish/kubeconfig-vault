@@ -66,7 +66,7 @@ Repair requires an already linked client, a missing generated file, readable enc
 
 ## Supported kubeconfig inputs
 
-- **File** — one Kubernetes `v1` `Config` document, up to 4 MiB. The generated and portable versions must also fit after CAs are embedded.
+- **File** — one Kubernetes `v1` `Config` document, up to 4 MiB. The generated and portable versions must also fit after CAs are embedded. Each cluster's embedded CA counts toward that limit, including clusters that reference the same file. A selected CA file must contain a public certificate. Omit the CA fields to use system trust.
 - **Authentication** — one inline `token` **or** both `client-certificate-data` and `client-key-data` per user. Different users in one file can use different methods. Certificate inputs must be complete base64-encoded PEM, with an end-user certificate first and a matching unencrypted private key. CA signing keys and certificates restricted to server use are rejected. The helper checks the leaf validity period when serving a credential. File-based user credentials, username/password, exec plugins, and auth providers are unsupported.
 - **TLS and proxies** — verified HTTPS with system trust or a public CA certificate supplied inline or by file. CA inputs must contain public certificate PEM blocks only. Supported proxy schemes are HTTP, HTTPS and SOCKS5. The proxy address is copied into the readable client file, so credentials, query strings and fragments are rejected.
 - **Contexts** — named clusters, users and contexts with valid references. Clients can update the current context and namespace. The encrypted editable source preserves legacy `preferences`. The generated client file and portable export omit them.
