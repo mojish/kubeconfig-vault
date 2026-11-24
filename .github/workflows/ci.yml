@@ -11,13 +11,17 @@ on:
         type: choice
         default: ordinary
         options: [ordinary, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+      freelens_desktop:
+        description: Exercise the actual Freelens desktop on each native runner
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.session_trial || 'ordinary' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.session_trial || 'ordinary' }}-${{ inputs.freelens_desktop || false }}
   cancel-in-progress: true
 
 jobs:
@@ -82,6 +86,42 @@ jobs:
           go build -trimpath -o kubeconfig-vault .
           ./kubeconfig-vault --help
       - uses: ./.github/actions/browser-clients
+      - name: Install the verified Freelens desktop on the temporary Linux runner
+        if: runner.os == 'Linux' && inputs.freelens_desktop
+        run: |
+          arch=$(dpkg --print-architecture)
+          case "$arch" in
+            arm64) digest=696a4f184bef4313ec04610b9e30175b8cd47800f3d2938e5118d3025e54ce6f ;;
+            amd64) digest=821b32bb18eccd06a4b5a3a7f5d503e3ef4bd17e4b41e82317e5379efbac0baf ;;
+            *) exit 1 ;;
+          esac
+          file="$RUNNER_TEMP/Freelens.deb"
+          curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 2 --max-time 240 \
+            "https://github.com/freelensapp/freelens/releases/download/v2.1.0/Freelens-2.1.0-linux-$arch.deb" -o "$file"
+          echo "$digest  $file" | sha256sum -c -
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "$file" xvfb xauth
+          desktop=$(command -v freelens)
+          printf 'KUBE_UNLOCK_TEST_FREELENS_DESKTOP=%s\n' "$desktop" >> "$GITHUB_ENV"
+      - name: Mount the verified Freelens desktop for the Mac trial
+        if: runner.os == 'macOS' && inputs.freelens_desktop
+        run: |
+          case "$(uname -m)" in
+            arm64) arch=arm64; digest=d4e0155c429e828edd5c0fdd111e0dfd21810e638d2baac951a677f7d89e6300 ;;
+            x86_64) arch=amd64; digest=f283b3dea60206e0bc60b1941091aa63635a909d424e5fc89c2c115e2c3791b3 ;;
+            *) exit 1 ;;
+          esac
+          image="$RUNNER_TEMP/Freelens.dmg"
+          volume="$RUNNER_TEMP/kcv-freelens-volume"
+          curl -q -fsSL --proto '=https' --proto-redir '=https' --retry 2 --max-time 240 \
+            "https://github.com/freelensapp/freelens/releases/download/v2.1.0/Freelens-2.1.0-macos-$arch.dmg" -o "$image"
+          echo "$digest  $image" | shasum -a 256 -c -
+          mkdir "$volume"
+          hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$volume" "$image"
+          echo 'KCV_FREELENS_MOUNTED=1' >> "$GITHUB_ENV"
+          desktop="$volume/Freelens.app/Contents/MacOS/Freelens"
+          test -x "$desktop"
+          printf 'KUBE_UNLOCK_TEST_FREELENS_DESKTOP=%s\n' "$desktop" >> "$GITHUB_ENV"
       - name: Check out the v0.3.0 upgrade fixture
         if: matrix.os == 'ubuntu-24.04'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -98,11 +138,20 @@ jobs:
           go build -trimpath -ldflags '-X main.version=v0.3.0' -o "$RUNNER_TEMP/kcv-previous" .
           echo "KUBE_UNLOCK_TEST_PREVIOUS_BINARY=$RUNNER_TEMP/kcv-previous" >> "$GITHUB_ENV"
       - name: Test synthetic browser and kubectl integration
-        if: matrix.os != inputs.session_trial
-        run: npm run test:browser
-      - name: Verify a full-hour session with real kubectl requests
-        if: matrix.os == inputs.session_trial
-        run: npm run test:browser -- --one-hour-session
+        env:
+          FULL_HOUR: ${{ matrix.os == inputs.session_trial }}
+        run: |
+          command=(npm run test:browser)
+          if [[ "$FULL_HOUR" == true ]]; then command+=(-- --one-hour-session); fi
+          if [[ "$RUNNER_OS" == Linux && -n "${KUBE_UNLOCK_TEST_FREELENS_DESKTOP:-}" ]]; then
+            exec xvfb-run -a "${command[@]}"
+          fi
+          exec "${command[@]}"
+      - name: Detach the temporary Freelens disk image
+        if: always() && runner.os == 'macOS' && inputs.freelens_desktop
+        run: |
+          volume="$RUNNER_TEMP/kcv-freelens-volume"
+          if [[ "${KCV_FREELENS_MOUNTED:-}" == 1 ]]; then hdiutil detach "$volume"; fi
       - name: Check dependency advisories
         if: matrix.os == 'ubuntu-24.04'
         run: npm run audit:security

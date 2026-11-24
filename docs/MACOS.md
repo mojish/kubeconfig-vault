@@ -6,7 +6,7 @@ Use a fresh macOS account, leave the YubiKey plugged in, and set Chrome as the d
 
 ## Check the download and first launch
 
-1. In Chrome, download `SHA256SUMS` and the macOS archive from the **same release** into an empty Downloads folder. Choose `darwin-arm64` for Apple Silicon or `darwin-amd64` for Intel. Keep the downloaded archive. [GitHub releases](https://github.com/mojish/kubeconfig-vault/releases)
+1. In Chrome, download `SHA256SUMS` and the macOS archive from the **same release** into an empty Downloads folder. Choose `darwin-arm64` for Apple Silicon or `darwin-amd64` for Intel. On Apple Silicon, use a native Terminal for the commands below. A Terminal running under Rosetta reports the Intel architecture. Keep the downloaded archive. [GitHub releases](https://github.com/mojish/kubeconfig-vault/releases)
 2. Verify the checksum in Terminal. Continue when the selected archive reports `OK`.
 
    ```sh
@@ -65,4 +65,4 @@ The test API exposes only a few resources. Other Freelens views may be empty. Th
 
 ## Report results
 
-Include the tag, Mac CPU, macOS version, Chrome, Freelens and kubectl versions, and YubiKey model. Record the first-launch result and whether `vault-test` appeared on both connections. The script’s `PASS`, `SKIP`, `FAIL` or `CANCELLED` lines and the last stage reached are sufficient. Omit keys, PINs, serial numbers, browser URLs, kubeconfigs and full logs.
+Include the tag, Mac CPU, selected archive, macOS version, Chrome, Freelens and kubectl versions, and YubiKey model. Record the first-launch result and whether `vault-test` appeared on both connections. The script’s `PASS`, `SKIP`, `FAIL` or `CANCELLED` lines and the last stage reached are sufficient. Omit keys, PINs, serial numbers, browser URLs, kubeconfigs and full logs.

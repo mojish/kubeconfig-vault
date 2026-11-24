@@ -14,6 +14,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { clientCertificateFixture } from "./test-support/client-certificate.mjs";
 import { chromeConnection } from "./test-support/cdp.mjs";
+import { dummyAPI } from "./test-support/dummy-api.mjs";
+import { displayNamespace } from "./test-support/freelens-desktop.mjs";
 
 const cwd = fileURLToPath(new URL(".", import.meta.url));
 const options = process.argv.slice(2);
@@ -53,18 +55,24 @@ async function bootstrapTarget(uri){
 async function startCertificateAPI(certificate, privateKey) {
   const fixture = await clientCertificateFixture(root);
   const { clientCert, clientKey } = fixture;
+  const desktop = {namespace:"vault-test", lists:0};
   const mtls = https.createServer({cert:certificate,key:privateKey,...fixture.tls},(req,res)=>{
     if (!fixture.accepts(req)) {
       res.writeHead(403).end();
       return;
     }
-    res.writeHead(200,{"Content-Type":"application/json"}).end('{"gitVersion":"v1.mtls"}');
+    const url = new URL(req.url, "https://localhost");
+    const body = dummyAPI(req.method, url.pathname, desktop.namespace);
+    if (!body) { res.writeHead(404).end(); return; }
+    if (url.pathname === "/version") body.gitVersion = "v1.32.1";
+    if (body.kind === "NamespaceList" && !url.searchParams.get("watch")) desktop.lists++;
+    res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify(body));
   });
   mtls.on("tlsClientError", error => {
     console.error("Synthetic mutual TLS handshake failed:",error.code,error.reason || error.message);
   });
   await new Promise((resolve,reject)=>{mtls.once("error",reject);mtls.listen(0,"127.0.0.1",resolve)});
-  return {mtls,clientCert,clientKey};
+  return {mtls,clientCert,clientKey,desktop};
 }
 
 try {
@@ -97,7 +105,7 @@ try {
   const sourceObject={apiVersion:"v1",kind:"Config",clusters:[{name:"synthetic",cluster:{server:`https://127.0.0.1:${server.address().port}`,"certificate-authority-data":certificate.toString("base64")}}],users:[{name:"synthetic",user:{token:tokenA}}],contexts:[{name:"synthetic",context:{cluster:"synthetic",user:"synthetic"}}],"current-context":"synthetic",preferences:{colors:true}};
   sourceObject.clusters.push({name:"second",cluster:{...sourceObject.clusters[0].cluster,server:sourceObject.clusters[0].cluster.server+"/second"}});
   sourceObject.contexts.push({name:"second",context:{cluster:"second",user:"synthetic"}});
-  const {mtls,clientCert,clientKey} = await startCertificateAPI(certificate,privateKey);
+  const {mtls,clientCert,clientKey,desktop} = await startCertificateAPI(certificate,privateKey);
   certificateAPI = mtls;
   const certificateCluster = {server:`https://127.0.0.1:${mtls.address().port}`,"certificate-authority-data":certificate.toString("base64")};
   const certificateUser = {"client-certificate-data":clientCert.toString("base64"),"client-key-data":clientKey.toString("base64")};
@@ -185,7 +193,7 @@ try {
       if(await evaluate("document.body?.textContent.trim()==='Forbidden'"))throw new Error("Private-file redirect was rejected by HTTP navigation checks");
       const step=await evaluate(`(()=>{const b=document.getElementById(${JSON.stringify(buttonId)});if(b&&!b.disabled){const step=document.querySelector('#progress').textContent;b.click();return step}})()`);
       if(step)visibleSteps.add(step);return false;
-    },"browser operation",500);
+    },"browser operation",operation.waitIterations ?? 500);
     return await operation.promise;
   }
   async function successful(operation){const r=await complete(operation);if(r.code!==0)throw new Error("Synthetic browser/CLI operation failed: "+r.stderr);return r}
@@ -628,12 +636,40 @@ try {
     const projection = await readFile(client,"utf8");
     assert.ok(!projection.includes("client-key-data") && !projection.includes(clientKey.toString("base64")) && !projection.includes(keyMarker));
     const certResult = await successful(kube("cert",client));
-    assert.equal(JSON.parse(certResult.stdout).gitVersion,"v1.mtls");
+    assert.equal(JSON.parse(certResult.stdout).gitVersion,"v1.32.1");
     assert.equal(JSON.parse((await kube("synthetic",client).promise).stdout).gitVersion,"v1.32.0");
+    const gui = process.env.KUBE_UNLOCK_TEST_FREELENS_DESKTOP;
+    if (gui) {
+      for (const reconnect of [false, true]) {
+        if (reconnect) {
+          assert.equal(JSON.parse(await cli("lock")).fully_locked,true);
+          desktop.namespace = "vault-test-reconnect";
+        }
+        const session = JSON.parse(await cli("status"));
+        const opens = (await urls()).length, initialLists = desktop.lists;
+        const desktopRun = new AbortController();
+        const operation = {done:false, waitIterations:2000};
+        operation.promise = displayNamespace({binary:gui, root, kubeconfig:client, context:"cert",
+          namespace:desktop.namespace, received:() => desktop.lists > initialLists, signal:desktopRun.signal})
+          .then(() => ({code:0}), error => ({code:1, stderr:error.message}))
+          .finally(() => { operation.done = true; });
+        try { await successful(operation); }
+        finally { desktopRun.abort(); await operation.promise; }
+        assert.equal((await urls()).length,opens + Number(reconnect));
+        const after = JSON.parse(await cli("status"));
+        assert.ok(after.unlocked);
+        if (!reconnect) assert.equal(after.expires_at,session.expires_at);
+        assert.equal((await kube("cert",client).promise).code,0);
+        assert.equal((await urls()).length,opens + Number(reconnect));
+        console.log(reconnect
+          ? "PASS: Freelens reopened after lock, approved once and rendered the new authenticated namespace; kubectl shared that session."
+          : "PASS: Freelens rendered a certificate-authenticated namespace using kubectl's original session and deadline.");
+      }
+    }
     const certBackup = join(root,"mixed.age"), certRecovery = join(root,"mixed-recovered");
     await cli("backup",certBackup);
     await cli("recover",certBackup,"--key",recovery,"--out",certRecovery);
-    assert.equal(JSON.parse((await kube("cert",certRecovery).promise).stdout).gitVersion,"v1.mtls");
+    assert.equal(JSON.parse((await kube("cert",certRecovery).promise).stdout).gitVersion,"v1.32.1");
     const browserRequests = JSON.stringify(events.filter(e=>e.method==="Network.requestWillBeSent").map(e=>e.params.request));
     for (const visible of [projection,browserRequests,daemonLog]) {
       assert.ok(!visible.includes(keyMarker) && !visible.includes(clientKey.toString("base64")),"client key escaped native credential handling");

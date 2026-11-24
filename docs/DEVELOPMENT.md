@@ -45,6 +45,10 @@ To exercise the default session for a full hour on an awake machine, run `npm ru
 
 Pull requests and pushes to main run native Go and browser tests on both CPU architectures for Linux and macOS. You can dispatch the workflow manually for a branch. The Linux ARM64 runner installs stable Chrome through Google's signed APT repository. Linux x86-64 also tests the previous binary and runs `npm run audit:security`, which checks npm and Go advisories. [CI workflow](../.github/workflows/ci.yml)
 
+### Test the Freelens desktop with a virtual key
+
+Enable the Freelens desktop option when manually running CI. Each runner verifies the pinned SHA-256 digest for its official desktop package. Linux installs the Debian package on the temporary runner and uses a private virtual display. The Mac runners mount the disk image read-only. The app opens a disposable kubeconfig and profile and the test controls the window over a private process pipe. Run this desktop test on a disposable OS account or VM. A separate app profile alone does not isolate the desktop from your account. The first case requires Freelens to display a certificate-authenticated namespace during kubectl’s session. The second reopens Freelens after locking and requires one fresh approval. Each case checks the API request and the actual namespace row. [Freelens 2.1.0 release](https://github.com/freelensapp/freelens/releases/tag/v2.1.0)
+
 ## Test with a physical YubiKey
 
 For the real Freelens GUI and Gatekeeper on macOS, use the [Mac test protocol](MACOS.md). For a kubectl hardware run on Linux or macOS, run these from the repo root with the same browser-test prerequisites and a USB security key:
