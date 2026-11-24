@@ -157,7 +157,9 @@ try {
   const call=(method,params={})=>cdp(method,params,sessionId);
   const evaluate=async expression=>{const r=await call("Runtime.evaluate",{expression,returnByValue:true,awaitPromise:true,userGesture:true});if(r.exceptionDetails)throw new Error("Synthetic page evaluation failed");return r.result.value};
   await call("Page.enable");await call("Runtime.enable");await call("Network.enable");await call("WebAuthn.enable",{enableUI:false});
-  const authenticator=await call("WebAuthn.addVirtualAuthenticator",{options:{protocol:"ctap2",ctap2Version:"ctap2_1",transport:"usb",hasResidentKey:false,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true,hasPrf:true}});
+  const virtualKeyOptions = {protocol:"ctap2",ctap2Version:"ctap2_1",transport:"usb",hasResidentKey:false,
+    hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true,hasPrf:true};
+  const originalKey = await call("WebAuthn.addVirtualAuthenticator", {options:virtualKeyOptions});
   let navigated=0; const visibleSteps = new Set();
   async function complete(operation, buttonId = "continue"){
     await waitFor(async()=>{
@@ -470,16 +472,37 @@ try {
   await successful(launch(["history","prune","--keep","1"]));
   assert.equal((await readdir(join(state,"generations"))).length,1);
 
-  // Restore at new state and executable paths, with the same recovery identity.
-  const oldState=state;
+  // Simulate losing the original key and helper. Keep the old files aside for the later rollback checks.
+  await Promise.all([once(short,"exit"),cli("stop")]);
+  await call("WebAuthn.removeVirtualAuthenticator", {authenticatorId:originalKey.authenticatorId});
+  const oldState = state, offlineState = join(root,"old-state-offline");
+  await rename(oldState, offlineState);
   state=join(root,"relocated");
   const relocated=join(root,"relocated-cli");
   await copyFile(executable,relocated);
+  const wrongKey = join(root,"unrelated-recovery-key");
+  await cli("recovery-key","new",wrongKey);
+  const beforeWrongKey = (await urls()).length;
+  const rejected = await launch(["restore",backup,"--key",wrongKey],{program:relocated}).promise;
+  assert.notEqual(rejected.code,0,"an unrelated recovery key must fail");
+  assert.equal((await urls()).length,beforeWrongKey,"failed recovery opened a browser");
+  await assert.rejects(stat(join(state,"current")),{code:"ENOENT"});
+  const replacementKey = await call("WebAuthn.addVirtualAuthenticator", {options:virtualKeyOptions});
+  assert.notEqual(replacementKey.authenticatorId,originalKey.authenticatorId);
   const restored=launch(["restore",backup,"--key",recovery],{program:relocated});
   await successful(restored);
   const restoredProjection=await readFile(join(state,"current","kubeconfig"),"utf8");
   assert.ok(restoredProjection.includes(state) && restoredProjection.includes(relocated));
-  console.log("PASS: restored backup rebuilds paths for a new installation.");
+  await cli("lock");
+  const beforeReplacementUnlock = (await urls()).length;
+  const restoredClient = join(state,"current","kubeconfig");
+  const firstRecoveredRequest = await successful(kube("synthetic",restoredClient));
+  assert.equal(JSON.parse(firstRecoveredRequest.stdout).gitVersion,"v1.32.0");
+  const reused = await kube("synthetic",restoredClient).promise;
+  assert.equal(reused.code,0);
+  assert.equal(JSON.parse(reused.stdout).gitVersion,"v1.32.0");
+  assert.equal((await urls()).length,beforeReplacementUnlock+1);
+  console.log("PASS: wrong offline key rejected; a replacement authenticator unlocked the saved credential in new state and two kubectl requests shared one approval.");
   const absentClient = join(root,"new-client");
   await cli("config","link","--kubeconfig",absentClient);
   assert.match(await cli("setup", absentClient), /Already set up/);
@@ -523,8 +546,9 @@ try {
     console.log("PASS: real kubectl used a token and an embedded client certificate in one vault; mutual TLS worked after offline recovery.");
   }
   await cli("stop");
+  await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:replacementKey.authenticatorId});
+  await rename(offlineState,oldState);
   state=oldState;
-  await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:authenticator.authenticatorId});
   const recovered = join(root, "recovered");
   const restoring = launch(["recover", encryptedVault, "--out", recovered], { terminal: true });
   await waitFor(() => restoring.output.includes("input is hidden"), "hidden recovery prompt");
@@ -546,8 +570,6 @@ try {
   assert.ok(!httpText.includes(tokenA)&&!httpText.includes(tokenB)&&!httpText.includes(recoveryText));
   assert.ok(!daemonLog.includes(tokenA)&&!daemonLog.includes(tokenB)&&!daemonLog.includes(recoveryText)&&!daemonLog.includes("DATA RACE"));
   for(const name of await readdir(join(state,"generations"))){for(const file of ["vault.age","metadata.json","kubeconfig"]){const data=await readFile(join(state,"generations",name,file));assert.ok(!data.includes(tokenA)&&!data.includes(tokenB)&&!data.includes(recoveryText))}}
-  await Promise.all([once(short,"exit"),cli("stop")]);
-
   assert.equal(await readFile(source, "utf8"), original);
   assert.ok(!(await stat(source + ".before-kubeconfig-vault").catch(() => false)));
   await assert.rejects(stat(join(state, "session.sock")), { code: "ENOENT" });
