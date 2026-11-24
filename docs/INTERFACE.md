@@ -36,6 +36,8 @@ The editor comes from `VISUAL`, then `EDITOR`, then `vi`. An executable path can
 
 ## Backups and recovery
 
+Run `kubeconfig-vault help recovery` to choose an operation. Each command has its own examples. For instance, `kubeconfig-vault recover --help` shows how to check a backup or write a plaintext kubeconfig with the offline key.
+
 | Command | Output or result |
 | --- | --- |
 | `backup NEW-FILE` | A copy of the current encrypted generation. Can succeed even if the generated client file is damaged. |
