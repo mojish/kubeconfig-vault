@@ -104,8 +104,49 @@ credentials until the next unlock. The API server decides how long a delivered
 credential works. Existing connections and unfinished plaintext edits can remain.`
 	case "config", "config unlock", "config lock", "config discard", "config link", "config unlink", "config repair":
 		message = configHelp
-	case "recovery", "restore", "recover", "backup", "export":
+	case "recovery":
 		message = recoveryHelp
+	case "backup":
+		message = `kubeconfig-vault backup NEW-FILE
+
+Copy the latest encrypted kubeconfig to a new file. Save any edits you want
+to include before making the backup.
+Keep the backup and your offline recovery key in separate safe places.
+
+To make and check a backup, run
+  kubeconfig-vault backup cluster-backup.age
+  kubeconfig-vault recover cluster-backup.age --check`
+	case "recover":
+		message = `kubeconfig-vault recover VAULT.age --check
+kubeconfig-vault recover VAULT.age --out NEW-FILE
+
+Use --check to verify that your offline key decrypts a trusted backup.
+Use --out to write a new plaintext kubeconfig containing usable credentials.
+Enter your offline key at the hidden prompt, or pass --key FILE.
+
+To check a backup, run
+  kubeconfig-vault recover cluster-backup.age --check`
+	case "restore":
+		message = `kubeconfig-vault restore VAULT.age [--key FILE]
+
+Set up a new vault from a trusted encrypted backup. Use an unused vault
+directory, your offline recovery key, and the security key you want to enroll.
+Enter the offline key at the hidden prompt, or pass its file with --key.
+
+On a new laptop, run
+  kubeconfig-vault restore cluster-backup.age
+  kubeconfig-vault config link
+
+If this laptop already has a vault, put --state-dir NEW-DIR before each
+command and --kubeconfig NEW-FILE after config link.`
+	case "export":
+		message = `kubeconfig-vault export NEW-FILE
+
+Write the latest saved kubeconfig as plaintext. Approve with your enrolled
+security key and choose a new filename. The file contains usable credentials.
+
+For a file you can use with kubectl, run
+  kubeconfig-vault export recovered-config`
 	case "advanced", "import", "stop", "path", "serve", "credential", "recovery-key", "recovery-key new", "recovery-key public", "history", "history prune":
 		message = advancedHelp
 	case "options":
