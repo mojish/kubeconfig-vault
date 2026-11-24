@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 
-export function devtoolsPipe(child, {recordEvents = false, timeoutMs = 0} = {}) {
+export function devtoolsPipe(child, {recordEvents = false, getTimeoutMs} = {}) {
   const pending = new Map(), events = [];
   let sequence = 0, buffer = Buffer.alloc(0), closed;
   const close = () => {
@@ -37,6 +37,7 @@ export function devtoolsPipe(child, {recordEvents = false, timeoutMs = 0} = {}) 
     return new Promise((resolve, reject) => {
       if (closed) { reject(closed); return; }
       const id = ++sequence;
+      const timeoutMs = getTimeoutMs?.();
       const timer = timeoutMs && setTimeout(() => {
         pending.delete(id);
         reject(new Error(`Browser debugging command ${method} timed out after ${timeoutMs} ms`));

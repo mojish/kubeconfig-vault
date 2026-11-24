@@ -52,7 +52,11 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
   const desktop = spawn(binary, ["--user-data-dir=" + profile, "--remote-debugging-pipe",
     "--disable-background-networking", "--disable-gpu", "--password-store=basic"],
     {env, detached:true, stdio:["ignore","ignore","ignore","pipe","pipe"]});
-  const {call} = devtoolsPipe(desktop, {timeoutMs:15000});
+  const viewTimeoutMs = 85_000;
+  let deadline = performance.now() + viewTimeoutMs;
+  const {call} = devtoolsPipe(desktop, {
+    getTimeoutMs: () => Math.max(1, Math.ceil(deadline - performance.now())),
+  });
   let exited = false;
   const stopped = new Promise(resolve => {
     const finish = () => { exited = true; resolve(); };
@@ -69,8 +73,7 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
   let targetId, sessionId, stage = "opening the desktop";
   const clicked = new Map();
   try {
-    let deadline = Date.now() + 85_000;
-    while (Date.now() < deadline && !exited) {
+    while (performance.now() < deadline && !exited) {
       signal.throwIfAborted();
       await delay(250);
       const {targetInfos} = await call("Target.getTargets");
@@ -106,7 +109,7 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
               }
             }
             clicked.set(label, Date.now());
-            stage = label === context ? "opening the test cluster" : label;
+            stage = label === context ? "opening the test cluster" : `opening "${label}"`;
             break;
           }
         }
@@ -125,12 +128,13 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
         namespace = next.namespace;
         received = next.received;
         stage = "reloading the open desktop";
+        deadline = performance.now() + viewTimeoutMs;
         await call("Page.reload", {ignoreCache:true}, sessionId);
         clicked.clear();
-        deadline = Date.now() + 85_000;
       }
     }
-    throw new Error("Freelens did not render the authenticated namespace; last stage was " + stage);
+    throw new Error(exited ? "Freelens exited before displaying the authenticated namespace"
+      : "Freelens did not display the authenticated namespace before the navigation deadline");
   } catch (error) {
     throw new Error("Freelens trial stopped while " + stage, {cause:error});
   } finally {

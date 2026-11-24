@@ -717,9 +717,10 @@ try {
         desktop.namespace = "vault-test-reconnect";
         reconnect = {done:false, waitIterations:2000};
         reconnect.promise = displayNamespace({...desktopOptions, ...observeNamespace()})
-          .then(() => ({code:0}), error => ({code:1, stderr:error.message}))
+          .catch(error => error)
           .finally(() => { reconnect.done = true; });
-        await successful(reconnect);
+        const reconnectError = await complete(reconnect);
+        if (reconnectError) throw reconnectError;
         assert.equal((await kube("cert", client).promise).code, 0);
         assert.equal((await urls()).length, opens + 2);
         console.log("PASS: Freelens reopened after lock, approved once and rendered the new authenticated namespace; kubectl shared that session.");
