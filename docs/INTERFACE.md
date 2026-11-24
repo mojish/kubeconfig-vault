@@ -8,13 +8,14 @@ The general form is `kubeconfig-vault [global options] COMMAND`. Put global opti
 | --- | --- |
 | `setup [FILE]` | Validate one source, enroll the key if needed, save an encrypted rollback, and link the client path. Safe to repeat after an interrupted setup. |
 | `setup --check [FILE]` | Validate the input format locally. Reads the selected file and any referenced public CA. Leaves the filesystem untouched and skips browser enrollment and API connectivity checks. |
+| `setup [FILE] --recovery-key KEYFILE` | Set up a new vault using an existing private recovery key file. Complete the same security-key approval in the browser. To resume setup for an existing vault, omit the key option. |
 | `import [SOURCE]` | Create a vault from a source file and leave the source in place. Defaults to `~/.kube/config`. The original still contains the original credentials. |
 | `import SOURCE --recovery-key FILE` | Import using a private recovery key you already hold. Useful without a controlling terminal. |
 | `config link [--kubeconfig FILE]` | Attach a client path to an existing vault. An existing supported source gets an encrypted rollback. A previously empty path gets a receipt recording that fact. |
 | `config unlink [--kubeconfig FILE]` | Restore the original at that path, or detach a link whose path was originally empty. |
 | `config repair [--kubeconfig FILE]` | Authenticate and rebuild a missing generated kubeconfig for an already linked client. |
 
-`setup`, `config link`, `config unlink` and `config repair` use the single file selected by `KUBECONFIG`, or `~/.kube/config` by default. If `KUBECONFIG` lists multiple files, select one explicitly. Existing aliases to a source follow the link at its resolved target. Setup prints the target before replacing it. Relative CA paths resolve against the selected client path.
+`setup`, `config link`, `config unlink` and `config repair` use the single file selected by `KUBECONFIG`, or `~/.kube/config` by default. Empty entries and repeats of the same absolute path can appear alongside the selected file. If the list contains multiple different files or only separators, select a file explicitly. Existing aliases to a source follow the link at its resolved target. Setup prints the target before replacing it. Relative CA paths resolve against the selected client path.
 
 Setup and link store the encrypted original next to its target as `FILE.before-kubeconfig-vault.age`. A private receipt binds the target path to that backup’s digest. Keep both until unlink completes. After an interrupted setup, keep the original and rollback in place and repeat setup. A stale client-go `.lock` file can survive a killed writer. Confirm that every Vault and kubectl writer for that file has exited before removing the stale lock.
 

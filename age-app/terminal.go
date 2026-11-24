@@ -19,7 +19,7 @@ func recoveryTerminal(fileOption string) (*os.File, error) {
 	if tty != nil {
 		_ = tty.Close()
 	}
-	return nil, fmt.Errorf("a terminal is required; use %s FILE for unattended use", fileOption)
+	return nil, fmt.Errorf("a terminal is required for the recovery key; use %s FILE to supply it from a private file", fileOption)
 }
 
 func showNewRecoveryKey() ([]byte, error) {

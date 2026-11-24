@@ -127,6 +127,39 @@ func TestProjectionAndSelection(t *testing.T) {
 	}
 }
 
+func TestSelectionsAfterContextEdits(t *testing.T) {
+	entry := func(name, namespace string) namedContext {
+		return namedContext{Name: name, Context: contextConfig{Namespace: namespace}}
+	}
+	old := payload{Portable: config{Current: "unchanged", Contexts: []namedContext{
+		entry("gone", ""), entry("unchanged", ""), entry("modified", "old"),
+	}}}
+	source := config{Current: "unchanged", Contexts: []namedContext{
+		entry("modified", "explicit"), entry("added", "new"), entry("unchanged", ""),
+	}}
+	observed := config{Current: "gone", Contexts: []namedContext{
+		entry("gone", ""), entry("unchanged", "selected"), entry("modified", "selected"),
+	}}
+	next := payload{Portable: source, Projection: source}
+	next.Projection.Contexts = append([]namedContext(nil), source.Contexts...)
+	preserveSelections(&old, &next, observed)
+	if next.Projection.Current != "unchanged" || next.Projection.Contexts[0].Context.Namespace != "explicit" ||
+		next.Projection.Contexts[1].Context.Namespace != "new" || next.Projection.Contexts[2].Context.Namespace != "selected" ||
+		next.Portable.Contexts[2].Context.Namespace != "" {
+		t.Fatal("lost an edited or selected value, or changed the portable source")
+	}
+	observed.Current = ""
+	preserveSelections(&old, &next, observed)
+	if next.Projection.Current != "" {
+		t.Fatal("client's explicitly cleared selection was restored")
+	}
+	next.Portable.Current, next.Projection.Current = "modified", "modified"
+	preserveSelections(&old, &next, observed)
+	if next.Projection.Current != "modified" {
+		t.Fatal("source's explicitly changed current context lost")
+	}
+}
+
 func TestPrivateFileHandling(t *testing.T) {
 	d := privateTemp(t)
 	path := filepath.Join(d, "private")

@@ -171,7 +171,7 @@ func (s *service) setup(ctx context.Context, r request) (any, error) {
 		return nil, err
 	}
 	if id != "" && len(r.RecoveryIdentity) > 0 {
-		return nil, errors.New("another setup created the vault first; the recovery key shown by this attempt was not enrolled")
+		return nil, errors.New("another setup created the vault first; the recovery key from this attempt was not enrolled")
 	}
 	linked := s.isLinked(path)
 	legacy := path + configBackupSuffix

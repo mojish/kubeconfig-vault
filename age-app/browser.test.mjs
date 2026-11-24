@@ -603,6 +603,26 @@ try {
     console.log("PASS: real kubectl used a token and an embedded client certificate in one vault; mutual TLS worked after offline recovery.");
   }
   await cli("stop");
+  // Provision another disposable vault without a controlling terminal.
+  state = join(root, "file-key-state");
+  const fileKeySource = join(root, "file-key-source");
+  await writeFile(fileKeySource, original, {mode: 0o600});
+  const pagesBeforeFileKey = (await urls()).length;
+  const withKey = launch(["setup", fileKeySource, "--recovery-key", recovery], {detached: true});
+  await successful(withKey);
+  assert.equal((await urls()).length, pagesBeforeFileKey + 1);
+  assert.ok(!(withKey.stdout + withKey.stderr).includes(savedKey));
+  assert.equal(await readlink(fileKeySource), join(state, "current", "kubeconfig"));
+  const fileKeyBackup = join(root, "file-key.age");
+  await cli("backup", fileKeyBackup);
+  assert.match(await cli("recover", fileKeyBackup, "--key", recovery, "--check"), /verified/);
+  const pagesBeforeRepeat = (await urls()).length;
+  const repeat = await launch(["setup", fileKeySource, "--recovery-key", wrongKey]).promise;
+  assert.notEqual(repeat.code, 0);
+  assert.match(repeat.stderr, /already has a recovery key/);
+  assert.equal((await urls()).length, pagesBeforeRepeat);
+  await cli("stop");
+  console.log("PASS: setup used an existing offline key with browser approval; the same key decrypted the backup.");
   await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:replacementKey.authenticatorId});
   await rename(offlineState,oldState);
   state=oldState;

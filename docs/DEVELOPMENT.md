@@ -19,6 +19,8 @@ This leaves a development binary in `age-app/`. To install from a checkout, run 
 
 ## Run the checks
 
+To measure how edit saves reconcile context and namespace choices, run `go test -run '^$' -bench BenchmarkPreserveSelections -benchmem` in `age-app/` after building the browser assets. The benchmark covers 10, 100 and 1,000 disposable contexts.
+
 From `age-app/`, after building the browser assets:
 
 ```sh
