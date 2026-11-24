@@ -28,7 +28,7 @@ let executable = legacyExecutable;
 const launcher = join(root,"browser"), urlsFile = join(root,"urls");
 const recovery = join(root,"offline-key"), source = join(root,"source"), children = [];
 const tokenA = "SYNTHETIC-AGE-TOKEN-ONE", tokenB = "SYNTHETIC-AGE-TOKEN-TWO";
-let acceptedToken = tokenA, server, certificateAPI, failure;
+let acceptedToken = tokenA, server, certificateAPI, failure, tokenRequests = 0;
 const timeout = setTimeout(() => { failure = new Error("Synthetic integration timed out");for(const p of children)p.kill("SIGKILL");server?.closeAllConnections();server?.close(); },420000 + (fullHour ? 3600000 : 0));
 
 function launch(args, { terminal = false, program: cliProgram = executable, ...extra } = {}) {
@@ -98,6 +98,7 @@ try {
   assert.equal(generated.status,0,"synthetic TLS fixture generation failed");
   const certificate=await readFile(cert),privateKey=await readFile(key);
   server=https.createServer({key:privateKey,cert:certificate},(req,res)=>{
+    tokenRequests++;
     if(req.headers.authorization!==`Bearer ${acceptedToken}`){res.writeHead(401).end();return}
     res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({gitVersion:"v1.32.0"}));
   });
@@ -628,6 +629,9 @@ try {
     assert.ok((await readFile(mixedEdit,"utf8")).includes(tokenB));
     const mixed = structuredClone(sourceObject);
     mixed.users.push({name:"cert-user",user:certificateUser});
+    const expired = "test." + Buffer.from('{"exp":1.25}').toString("base64url") + ".test";
+    mixed.users.push({name:"expired",user:{token:expired}});
+    mixed.contexts.push({name:"expired",context:{cluster:"synthetic",user:"expired"}});
     mixed.clusters.push({name:"mtls",cluster:certificateCluster});
     mixed.contexts.push({name:"cert",context:{cluster:"mtls",user:"cert-user"}});
     await writeFile(mixedEdit,JSON.stringify(mixed),{mode:0o600});
@@ -637,7 +641,14 @@ try {
     assert.ok(!projection.includes("client-key-data") && !projection.includes(clientKey.toString("base64")) && !projection.includes(keyMarker));
     const certResult = await successful(kube("cert",client));
     assert.equal(JSON.parse(certResult.stdout).gitVersion,"v1.32.1");
+    const beforeExpired = {requests:tokenRequests, pages:(await urls()).length};
+    const rejectedToken = await kube("expired",client).promise;
+    assert.notEqual(rejectedToken.code,0);
+    assert.match(rejectedToken.stderr,/Kubernetes token has expired/);
+    assert.equal(tokenRequests,beforeExpired.requests);
     assert.equal(JSON.parse((await kube("synthetic",client).promise).stdout).gitVersion,"v1.32.0");
+    assert.equal((await urls()).length,beforeExpired.pages);
+    console.log("PASS: kubectl rejected an expired JWT before contacting the API and reused the session for a valid credential.");
     const gui = process.env.KUBE_UNLOCK_TEST_FREELENS_DESKTOP;
     if (gui) {
       for (const reconnect of [false, true]) {
