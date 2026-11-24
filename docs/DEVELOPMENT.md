@@ -76,7 +76,7 @@ sh install.sh --from-dir "$scratch/assets" "$scratch/bin"
 "$scratch/bin/kubeconfig-vault" --version
 ```
 
-Two Linux runners build the same revision with the same Go toolchain and locked Node dependencies. The second runner uses a different file-creation mask. The packager fixes file modes, member order, ownership, timestamps, and gzip headers so another build can produce the same four archives. CI compares both checksum manifests and checks every archive and the installer against the second build. To repeat the comparison locally, use two clean checkouts of the same commit and tag, build on Linux with the release toolchain, and compare the two `SHA256SUMS` files. [Archive metadata and reproducible builds](https://reproducible-builds.org/docs/archives/)
+Two Linux runners build the same revision with the same Go toolchain and locked Node dependencies. The second runner compiles with a fresh Go build cache and a different file-creation mask. The packager fixes file modes, member order, ownership, timestamps, and gzip headers so another build can produce the same four archives. CI compares both checksum manifests and checks every archive and the installer against the second build. To repeat the comparison locally, use two clean checkouts of the same commit and tag, build on Linux with the release toolchain, and compare the two `SHA256SUMS` files. [Archive metadata and reproducible builds](https://reproducible-builds.org/docs/archives/)
 
 Changes to the packaging script or release workflow rehearse these checks in pull requests. You can also run the Release workflow manually. Rehearsals use the version `v0.0.0` and create temporary workflow artifacts.
 

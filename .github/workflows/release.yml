@@ -40,11 +40,15 @@ jobs:
         with:
           go-version-file: age-app/go.mod
           cache-dependency-path: age-app/go.sum
+          cache: ${{ matrix.build == 'primary' }}
       - name: Package the four targets
         env:
           BUILD: ${{ matrix.build }}
         run: |
-          if [[ "$BUILD" == rebuild ]]; then umask 077; fi
+          if [[ "$BUILD" == rebuild ]]; then
+            umask 077
+            export GOCACHE="$RUNNER_TEMP/rebuild-go-cache"
+          fi
           ./scripts/package-release.sh "$PACKAGE_TAG" "$RUNNER_TEMP/kcv-release"
       - name: Test immutable download URLs in the published installer
         if: matrix.build == 'primary'
