@@ -63,7 +63,7 @@ Preflight checks the binary and uses kubectl against the test API. The desktop t
 | Reconnect | Quit with Command-Q when asked. The script locks the vault and relaunches Freelens. Open the same cluster, approve the fresh unlock, open **Namespaces**, and quit when prompted. | `vault-test` appears again and the second authenticated request is detected. |
 | Decline and recover | Click **Decline request** on the last unlock page. Let the script finish. | kubectl is refused, the helper stays locked, and offline recovery succeeds without a browser prompt. |
 
-The test API exposes only a few resources. Other Freelens views may be empty. The script cleans up its own processes and temporary files on completion or Ctrl-C. Close the remaining test browser tabs.
+The test API contains one namespace and no workloads. The current preflight also checks the empty Pod lists that Freelens requests for the cluster and namespace. Other views may be empty. The script cleans up its own processes and temporary files on completion or Ctrl-C. Close the remaining test browser tabs.
 
 ## Report results
 

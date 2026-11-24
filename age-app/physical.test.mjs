@@ -153,7 +153,7 @@ try {
     "-config", tlsConfig], { encoding: "utf8", timeout: 15000 });
   assert.ok(made.status === 0, "dummy TLS fixture failed");
   const certificate = await readFile(cert);
-  // Keep the default token harness usable as a single downloadable script.
+  // Only the certificate trial needs the Go-generated client fixture.
   const identity = useCertificate
     ? await (await import("./test-support/client-certificate.mjs")).clientCertificateFixture(root)
     : undefined;
@@ -197,6 +197,13 @@ try {
     "--kubeconfig", source, "--cache-dir", join(root, "kubecache"), "get", "--raw=/api/v1/namespaces",
   ], 15_000));
   assert.equal(namespaces.items[0].metadata.name, "vault-test");
+  for (const path of ["/api/v1/pods", "/api/v1/namespaces/vault-test/pods"]) {
+    const pods = JSON.parse(await run(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl", [
+      "--kubeconfig", source, "get", "--raw=" + path,
+    ], 15_000));
+    assert.equal(pods.kind, "PodList");
+    assert.deepEqual(pods.items, []);
+  }
   // Prove that this fixture actually needs its selected credential.
   const invalid = JSON.parse(original);
   invalid.users[0].user = { token: "deliberately-invalid" };
