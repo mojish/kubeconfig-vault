@@ -1,0 +1,58 @@
+name: Compatibility trial
+description: Record one disposable install, unlock, desktop or recovery trial.
+title: "[Compatibility] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use a disposable cluster or the [test fixtures](https://github.com/mojish/kubeconfig-vault/blob/main/docs/COMPATIBILITY.md). Report one attempt, including attempts that stopped early.
+        Leave out kubeconfigs, private keys, tokens, PINs, serial numbers, browser URLs, and full logs. Report a suspected vulnerability through [private reporting](https://github.com/mojish/kubeconfig-vault/security/advisories/new).
+  - type: input
+    id: environment
+    attributes:
+      label: Release and environment
+      description: Include OS and CPU, browser, client version, and virtual or physical key. For a physical key, the model and connection are enough.
+      placeholder: v0.4.2, Linux x86-64, Chrome 158, kubectl 1.36, virtual USB
+    validations:
+      required: true
+  - type: dropdown
+    id: credential
+    attributes:
+      label: Credential used
+      options:
+        - Inline bearer token
+        - Embedded client certificate and private key
+        - Both in one kubeconfig
+        - No credential used (install only)
+    validations:
+      required: true
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: What did you try?
+      options:
+        - Installation or first launch
+        - kubectl unlock and session reuse
+        - Freelens desktop and reconnect
+        - Recovery from an encrypted backup
+        - Restore with a replacement key
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: outcome
+    attributes:
+      label: Outcome
+      options:
+        - Passed
+        - Blocked
+        - Inconclusive
+    validations:
+      required: true
+  - type: textarea
+    id: observation
+    attributes:
+      label: What happened?
+      description: Give the last step you reached, what you observed, and the first confusing step, if any. Mention if you needed help.
+    validations:
+      required: true

@@ -4,16 +4,18 @@ A release archive, a successful API request and a physical-key test answer diffe
 
 | Environment | Archive installation | Credential delivery to a disposable API | Physical key or desktop |
 | --- | --- | --- | --- |
-| Linux x86-64 | v0.4.1 native release job and post-publication download | Chrome virtual USB authenticator and real kubectl, with both an inline token and an embedded TLS certificate/key pair. The certificate also worked after offline recovery. | The project recorded a physical USB YubiKey run and a separate Freelens 2.1.0 desktop trial by v0.4.0. Those earlier results concern the token workflow. |
-| Linux ARM64 | v0.4.1 native install, version and compatibility-link checks | — | — |
-| macOS Apple Silicon | v0.4.1 native release job | Packaged CLI, Chrome virtual authenticator and real kubectl, with token and certificate credentials | Physical USB approval, Freelens desktop and first launch of a quarantined download await a Mac trial. |
-| macOS Intel | v0.4.1 native release job | Same packaged test on the Intel runner | The same three observations await an Intel Mac trial. |
+| Linux x86-64 | v0.4.2 native release job and post-publication download | Chrome virtual USB authenticator and real kubectl, with both an inline token and an embedded TLS certificate/key pair. The certificate also worked after offline recovery. | The project recorded a physical USB YubiKey run and a separate Freelens 2.1.0 desktop trial by v0.4.0. Those earlier results concern the token workflow. |
+| Linux ARM64 | v0.4.2 native install, version and compatibility-link checks | — | — |
+| macOS Apple Silicon | v0.4.2 native release job | Packaged CLI, Chrome virtual authenticator and real kubectl, with token and certificate credentials | Physical USB approval, Freelens desktop and first launch of a quarantined download await a Mac trial. |
+| macOS Intel | v0.4.2 native release job | Same packaged test on the Intel runner | The same three observations await an Intel Mac trial. |
 
-Evidence for the baseline comes from the [v0.4.1 release run](https://github.com/mojish/kubeconfig-vault/actions/runs/45280583507), [published Linux installation](https://github.com/mojish/kubeconfig-vault/actions/runs/45283037297) and [earlier Linux hardware and desktop results](https://github.com/mojish/kubeconfig-vault/blob/v0.4.0/README.md#compatibility). The [integration test](../age-app/browser.test.mjs) exercises bearer authentication and mutual TLS separately. The API accepts the generated certificate only with proof of possession of the matching private key.
+Evidence for the baseline comes from the [v0.4.2 release run](https://github.com/mojish/kubeconfig-vault/actions/runs/45349965079), [published Linux installation](https://github.com/mojish/kubeconfig-vault/actions/runs/45350854210) and [earlier Linux hardware and desktop results](https://github.com/mojish/kubeconfig-vault/blob/v0.4.0/README.md#compatibility). The [integration test](../age-app/browser.test.mjs) exercises bearer authentication and mutual TLS separately. The API accepts the generated certificate only with proof of possession of the matching private key.
 
 On November 24, 2026, the v0.4.1 source build also ran with a virtual USB authenticator on Linux x86-64. Chrome 158 and kubectl v1.36.6 established one session. Freelens 2.1.0 displayed the authenticated `vault-test` namespace with the same expiration and no second approval. A separate run checked the proxy's first refresh after lock. The [captioned walkthrough and transcript](DEMO.md) show both observations.
 
 The v0.4.2 Linux x86-64 candidate was also tested after installation from its archive. Real kubectl authenticated with both credential types, the Freelens proxy requested fresh approval after its cached credential deadline, and the recovered certificate authenticated to the mutual-TLS endpoint. The desktop recording above uses the v0.4.1 build.
+
+A subsequent Linux x86-64 test used the published v0.4.2 binary with a new virtual authenticator. With the original helper stopped, its state path unavailable and its authenticator removed, an unrelated recovery key failed before enrollment. The correct offline key restored the edited backup into fresh state. Two real kubectl requests reused one new approval from the replacement authenticator.
 
 ## Most valuable next trials
 
@@ -23,7 +25,7 @@ The v0.4.2 Linux x86-64 candidate was also tested after installation from its ar
 | macOS download and desktop | Run the [Mac protocol](MACOS.md) on each CPU family. Record quarantine and first launch before running the desktop workflow. | Record Gatekeeper's decision as its own result. For the GUI, record the authenticated namespace on the first connection and again after reconnect. |
 | Recover the latest save | In a disposable test account, protect a test config, edit a harmless namespace using `kubeconfig-vault edit`, save and make a fresh backup. In a clean directory run `recover BACKUP.age --check`, then `recover BACKUP.age --out recovered` using the saved offline key. Use the [recovery guide](README.md#choose-a-recovery-path). | `kubectl --kubeconfig recovered config view --minify -o 'jsonpath={.contexts[0].context.namespace}'` shows the edit and a read-only API request works. Separately, `config unlink` on the linked test file restores the original from setup. |
 
-Record one row per attempt, including a blocked or inconclusive result. A short report can be kept privately. Copy this line and fill in the parts you observed.
+Record one row per attempt, including a blocked or inconclusive result. Use the [compatibility issue form](https://github.com/mojish/kubeconfig-vault/issues/new?template=compatibility.yml), or keep a private report using the line below.
 
 ```text
 Release / OS and CPU / browser / client and version / authenticator model and connection / token or certificate / scenario / passed, blocked or inconclusive / first confusing step
