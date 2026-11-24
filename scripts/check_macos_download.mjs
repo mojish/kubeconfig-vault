@@ -35,22 +35,32 @@ async function browserDownload() {
   await mkdir(downloads, {mode:0o700});
   const chrome = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     ["--headless=new", "--remote-debugging-pipe", "--user-data-dir=" + join(root,"profile"),
-     "--no-first-run", "--disable-background-networking", "--disable-sync", "about:blank"],
+     "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-sync",
+     "--password-store=basic", "--use-mock-keychain", "about:blank"],
     {cwd:root, env:clean, stdio:["ignore","ignore","ignore","pipe","pipe"]});
   const stopped = new Promise(resolve => { chrome.once("exit", resolve); chrome.once("error", resolve); });
-  const {call, events} = devtoolsPipe(chrome, {recordEvents:true, timeoutMs:20000});
+  const pipe = devtoolsPipe(chrome, {recordEvents:true, timeoutMs:30000});
+  const call = (method, params, id) => pipe.call(method, params, id).catch(() => {
+    throw new Error("The disposable Chrome instance did not complete " + method);
+  });
   try {
+    const version = await call("Browser.getVersion");
+    console.log("Download browser:", version.product);
     await call("Browser.setDownloadBehavior", {behavior:"allow", downloadPath:downloads, eventsEnabled:true});
     const {targetId} = await call("Target.createTarget", {url:"about:blank"});
     const {sessionId} = await call("Target.attachToTarget", {targetId, flatten:true});
-    await call("Page.navigate", {url:`https://github.com/${repository}/releases/download/${tag}/${asset}`}, sessionId);
+    // A navigation served as an attachment may never commit a document.
+    // Use the download event as the completion signal.
+    let navigationIssue;
+    void call("Page.navigate", {url:`https://github.com/${repository}/releases/download/${tag}/${asset}`}, sessionId)
+      .then(result => { navigationIssue = result.errorText; }, error => { navigationIssue = error.message; });
     const deadline = Date.now() + 90000;
     while (Date.now() < deadline) {
-      if (events.some(e => e.method === "Browser.downloadProgress" && e.params.state === "completed")) return;
-      if (events.some(e => e.method === "Browser.downloadProgress" && e.params.state === "canceled")) break;
+      if (pipe.events.some(e => e.method === "Browser.downloadProgress" && e.params.state === "completed")) return;
+      if (pipe.events.some(e => e.method === "Browser.downloadProgress" && e.params.state === "canceled")) break;
       await delay(250);
     }
-    throw new Error("Chrome did not finish the release download");
+    throw new Error("Chrome did not finish the release download (" + (navigationIssue || "no completion event") + ")");
   } finally {
     if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill("SIGTERM");
     await Promise.race([stopped, delay(2500)]);
