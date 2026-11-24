@@ -5,7 +5,7 @@ A release archive, a successful API request and a physical-key test answer diffe
 | Environment | Archive installation | Credential delivery to a disposable API | Physical key or desktop |
 | --- | --- | --- | --- |
 | Linux x86-64 | v0.4.2 native release job and post-publication download | Chrome virtual USB authenticator and real kubectl, with both an inline token and an embedded TLS certificate/key pair. The certificate also worked after offline recovery. | The project recorded a physical USB YubiKey run and a separate Freelens 2.1.0 desktop trial by v0.4.0. Those earlier results concern the token workflow. |
-| Linux ARM64 | v0.4.2 native install, version and compatibility-link checks | — | — |
+| Linux ARM64 | v0.4.2 native install, version and compatibility-link checks | [Native source-build trial](https://github.com/mojish/kubeconfig-vault/actions/runs/45354368129/job/138308403582) with Chrome 158.0.8127.88, virtual USB and kubectl v1.37.2. A token and a client certificate each authenticated, including mutual TLS after offline recovery. | — |
 | macOS Apple Silicon | v0.4.2 native release job | Packaged CLI, Chrome virtual authenticator and real kubectl, with token and certificate credentials | Physical USB approval, Freelens desktop and first launch of a quarantined download await a Mac trial. |
 | macOS Intel | v0.4.2 native release job | Same packaged test on the Intel runner | The same three observations await an Intel Mac trial. |
 

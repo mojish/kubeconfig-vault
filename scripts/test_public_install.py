@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from check_public_install import ARCHIVE, BASE, PublicInstall, VerificationError, verify_release
+from check_public_install import BASE, PublicInstall, VerificationError, native_archive, verify_release
 
 
 class PublicInstallationTests(unittest.TestCase):
@@ -31,7 +31,7 @@ class PublicInstallationTests(unittest.TestCase):
             self.assertFalse(github)
             if args[0] == "curl":
                 dest = self.check.root / args[-2]
-                if dest.name == ARCHIVE:
+                if dest.name == self.check.archive:
                     with tarfile.open(dest, "w:gz") as out:
                         entry = tarfile.TarInfo("kube-unlock-age")
                         entry.size = len(self.bytes)
@@ -45,9 +45,19 @@ class PublicInstallationTests(unittest.TestCase):
         with patch.dict(os.environ, GH_TOKEN="synthetic"), patch.object(self.check, "run", side_effect=run):
             verify_release(self.check)
         self.assertEqual([x[-1] for x in calls if x[0] == "curl"],
-                         [f"{BASE}/download/v1.2.3/{ARCHIVE}", f"{BASE}/download/v1.2.3/install.sh",
+                         [f"{BASE}/download/v1.2.3/{self.check.archive}", f"{BASE}/download/v1.2.3/install.sh",
                           f"{BASE}/latest/download/install.sh"])
         self.assertEqual(sum(x[:3] == ("gh", "release", "verify-asset") for x in calls), 3)
+
+    def test_native_release_archives(self):
+        for system, machine, target in [
+            ("Linux", "x86_64", "linux-amd64"), ("Linux", "aarch64", "linux-arm64"),
+            ("Darwin", "x86_64", "darwin-amd64"), ("Darwin", "arm64", "darwin-arm64"),
+        ]:
+            with self.subTest(target=target):
+                self.assertEqual(native_archive(system, machine), f"kubeconfig-vault-{target}.tar.gz")
+        with self.assertRaises(VerificationError):
+            native_archive("Linux", "i686")
 
     def test_immutable_failure_cannot_be_skipped(self):
         with patch.object(self.check, "prepare", side_effect=VerificationError("corrupt")), \
