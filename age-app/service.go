@@ -7,11 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -527,12 +527,13 @@ func (s *service) cachePayload(epoch uint64, p *payload, generation string) erro
 }
 
 func tokenDeadline(token string, deadline time.Time) time.Time {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
+	const maxClaims = 64 << 10
+	parts := strings.SplitN(token, ".", 4)
+	if len(parts) != 3 || len(parts[1]) > base64.RawURLEncoding.EncodedLen(maxClaims) {
 		return deadline
 	}
 	b, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil || len(b) > 65536 {
+	if err != nil {
 		return deadline
 	}
 	defer clear(b)
@@ -542,11 +543,25 @@ func tokenDeadline(token string, deadline time.Time) time.Time {
 	if json.Unmarshal(b, &claims) != nil || claims.Exp == "" {
 		return deadline
 	}
-	seconds, err := strconv.ParseInt(string(claims.Exp), 10, 64)
-	if err != nil {
+	// An approximate magnitude check also handles exponents outside float64's
+	// range. Only plausible dates need exact decimal arithmetic. Leave a full
+	// second of headroom so rounding here cannot extend the actual deadline.
+	approx, _ := claims.Exp.Float64()
+	if approx < 1e-9 {
+		return time.Unix(0, 0)
+	}
+	if approx > float64(deadline.Unix())+2 {
 		return deadline
 	}
-	expires := time.Unix(seconds, 0)
+	value, ok := new(big.Rat).SetString(claims.Exp.String())
+	if !ok {
+		return deadline
+	}
+	var seconds, nanos big.Int
+	seconds.QuoRem(value.Num(), value.Denom(), &nanos)
+	nanos.Mul(&nanos, big.NewInt(int64(time.Second)))
+	nanos.Quo(&nanos, value.Denom())
+	expires := time.Unix(seconds.Int64(), nanos.Int64())
 	if expires.Before(deadline) {
 		return expires
 	}

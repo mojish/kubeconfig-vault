@@ -52,7 +52,9 @@ The default helper session lasts one hour from approval. Both elapsed time and a
 
 On every credential delivery the helper reads the current generated client file under its usual ownership, link, permission and size checks. Within an approved session, identical bytes can reuse the previous settings comparison. When the SHA-256 digest changes, the helper parses the file and compares the managed fields with the authenticated vault again. This allows a namespace selection to change and rejects a different cluster endpoint. The digest expires with the session.
 
-The client’s own cache has a shorter deadline. Vault returns the earliest of 60 seconds from delivery, the helper’s expiry, and the credential’s expiry when available (a recognized JWT expiry or the client certificate’s expiry). `lock` clears the helper’s cache. A running client can still use its delivered credential or an established connection. The cluster still decides whether to accept the underlying credential.
+The client’s own cache has a shorter deadline. Vault returns the earliest of 60 seconds from delivery, the helper’s expiry, and the credential’s expiry when available. For a client certificate it uses the leaf certificate’s expiry. For a JWT it reads the numeric `exp` claim, including fractional seconds and exponent notation. It uses that unverified claim only to shorten local access. The cluster decides whether to accept the credential. [JWT NumericDate](https://www.rfc-editor.org/rfc/rfc7519#section-2)
+
+`lock` clears the helper’s cache. A running client can still use its delivered credential or an established connection.
 
 This design protects a stored kubeconfig. A process running as the same OS user, a compromised browser, or a client that has received a credential can access sensitive material. WebAuthn’s localhost relying-party ID is shared across ports. Screen lock does not lock the helper automatically. Core dumps are disabled, but swap, hibernation, editor backups and filesystem snapshots remain considerations. The project awaits independent security review. [Review scope](../SECURITY.md)
 

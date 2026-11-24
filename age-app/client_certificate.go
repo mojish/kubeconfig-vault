@@ -74,6 +74,9 @@ func parseClientCertificate(certData, keyData string) (*clientCertificate, error
 }
 
 func (r record) execStatus(sessionEnd, now time.Time) (map[string]string, error) {
+	if !now.Before(sessionEnd) {
+		return nil, errors.New("credential session expired")
+	}
 	deadline := credentialDeadline(r.Token, sessionEnd, now)
 	out := map[string]string{}
 	switch {
@@ -84,7 +87,7 @@ func (r record) execStatus(sessionEnd, now time.Time) (map[string]string, error)
 		}
 		end := time.Unix(cert.NotAfter, 0)
 		if !now.Before(end) {
-			return nil, errors.New("Kubernetes client certificate has expired; update the source credential")
+			return nil, errors.New("Kubernetes client certificate has expired; use kubeconfig-vault edit to replace it")
 		}
 		if end.Before(deadline) {
 			deadline = end
@@ -93,15 +96,12 @@ func (r record) execStatus(sessionEnd, now time.Time) (map[string]string, error)
 		out["clientKeyData"] = cert.KeyPEM
 	case r.Certificate == nil && r.Token != "":
 		if !now.Before(deadline) {
-			return nil, errors.New("Kubernetes token has expired; update the source credential")
+			return nil, errors.New("Kubernetes token has expired; use kubeconfig-vault edit to replace it")
 		}
 		out["token"] = r.Token
 	default:
 		return nil, errors.New("invalid credential record")
 	}
-	if !now.Before(deadline) {
-		return nil, errors.New("credential session expired")
-	}
-	out["expirationTimestamp"] = deadline.UTC().Format(time.RFC3339)
+	out["expirationTimestamp"] = deadline.UTC().Format(time.RFC3339Nano)
 	return out, nil
 }
