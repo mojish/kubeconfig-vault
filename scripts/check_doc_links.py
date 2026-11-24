@@ -51,8 +51,13 @@ def read_guide(path):
 def check(root):
     root = root.resolve()
     files = [root / "README.md", root / "SECURITY.md", *sorted((root / "docs").glob("*.md"))]
-    guides = {path: read_guide(path) for path in files}
+    guides = {}
     errors = []
+    for path in files:
+        if not path.resolve().is_relative_to(root):
+            errors.append(f"{path.relative_to(root)}: guide resolves outside the checkout")
+            continue
+        guides[path] = read_guide(path)
     count = 0
     for source, (_, links) in guides.items():
         for line, link in links:

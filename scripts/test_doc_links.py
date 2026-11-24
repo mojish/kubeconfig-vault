@@ -6,6 +6,15 @@ from check_doc_links import check
 
 
 class GuideLinksTest(unittest.TestCase):
+    def test_external_guide_is_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            (root / "docs").mkdir(parents=True)
+            (root / "README.md").write_text("# Guide\n")
+            (root / "SECURITY.md").write_text("# Policy\n")
+            (root / "docs" / "outside.md").symlink_to(root.parent)
+            self.assertEqual(check(root), (0, ["docs/outside.md: guide resolves outside the checkout"]))
+
     def test_markdown_and_html_links(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
