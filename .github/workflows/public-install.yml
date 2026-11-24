@@ -9,6 +9,10 @@ on:
         description: Published release tag to verify
         required: true
         type: string
+      macos_download:
+        description: Observe browser download, Archive Utility and first launch on the hosted Macs
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,7 +25,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
-    timeout-minutes: 6
+    timeout-minutes: ${{ inputs.macos_download && 12 || 6 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,3 +35,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: python3 scripts/check_public_install.py "$TAG"
+      - name: Observe the downloaded executable on this hosted Mac
+        if: runner.os == 'macOS' && inputs.macos_download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: node scripts/check_macos_download.mjs "$TAG"

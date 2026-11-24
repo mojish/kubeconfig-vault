@@ -6,6 +6,8 @@ Use a fresh macOS account, leave the YubiKey plugged in, and set Chrome as the d
 
 ## Check the download and first launch
 
+To collect a hosted comparison, run the **Verify public installation** workflow, enter a published tag, and select the macOS download option. It downloads through Chrome, verifies the release asset, expands it with Archive Utility and records quarantine before the first command-line launch. The log also reports Gatekeeper's state on that runner. Record your Mac's result separately. [Apple's guide to opening downloaded apps](https://support.apple.com/en-us/102445)
+
 1. In Chrome, download `SHA256SUMS` and the macOS archive from the **same release** into an empty Downloads folder. Choose `darwin-arm64` for Apple Silicon or `darwin-amd64` for Intel. On Apple Silicon, use a native Terminal for the commands below. A Terminal running under Rosetta reports the Intel architecture. Keep the downloaded archive. [GitHub releases](https://github.com/mojish/kubeconfig-vault/releases)
 2. Verify the checksum in Terminal. Continue when the selected archive reports `OK`.
 
