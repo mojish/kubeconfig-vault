@@ -3,17 +3,28 @@ name: Release
 on:
   push:
     tags: ['v*']
+  pull_request:
+    paths: ['scripts/package-release.sh', '.github/workflows/release.yml']
+  workflow_dispatch:
+
+env:
+  PACKAGE_TAG: ${{ github.event_name == 'push' && github.ref_name || 'v0.0.0' }}
 
 permissions:
   contents: read
 
 jobs:
   test:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/ci.yml
 
   package:
+    name: Package (${{ matrix.build }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      matrix:
+        build: [primary, rebuild]
     env:
       GOTOOLCHAIN: local
     steps:
@@ -30,15 +41,28 @@ jobs:
           go-version-file: age-app/go.mod
           cache-dependency-path: age-app/go.sum
       - name: Package the four targets
-        run: ./scripts/package-release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/kcv-release"
+        env:
+          BUILD: ${{ matrix.build }}
+        run: |
+          if [[ "$BUILD" == rebuild ]]; then umask 077; fi
+          ./scripts/package-release.sh "$PACKAGE_TAG" "$RUNNER_TEMP/kcv-release"
       - name: Test immutable download URLs in the published installer
-        run: sh scripts/test-install.sh "$RUNNER_TEMP/kcv-release/install.sh" "$GITHUB_REF_NAME"
+        if: matrix.build == 'primary'
+        run: sh scripts/test-install.sh "$RUNNER_TEMP/kcv-release/install.sh" "$PACKAGE_TAG"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.build == 'primary'
         with:
           name: release-assets
           path: ${{ runner.temp }}/kcv-release/
           if-no-files-found: error
           compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.build == 'rebuild'
+        with:
+          name: rebuilt-checksums
+          path: ${{ runner.temp }}/kcv-release/SHA256SUMS
+          if-no-files-found: error
           retention-days: 7
 
   smoke:
@@ -55,12 +79,23 @@ jobs:
         with:
           name: release-assets
           path: ${{ runner.temp }}/kcv-release/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: matrix.runner == 'ubuntu-24.04'
+        with:
+          name: rebuilt-checksums
+          path: ${{ runner.temp }}/rebuilt
+      - name: Verify all release bytes against the second runner's rebuild
+        if: matrix.runner == 'ubuntu-24.04'
+        working-directory: ${{ runner.temp }}/kcv-release
+        run: |
+          cmp SHA256SUMS "$RUNNER_TEMP/rebuilt/SHA256SUMS"
+          sha256sum -c "$RUNNER_TEMP/rebuilt/SHA256SUMS"
       - name: Verify and run the packaged executable
         shell: bash
         run: |
           sh "$RUNNER_TEMP/kcv-release/install.sh" --from-dir "$RUNNER_TEMP/kcv-release" "$RUNNER_TEMP/kcv bin"
           version=$("$RUNNER_TEMP/kcv bin/kubeconfig-vault" --version)
-          test "$version" = "kubeconfig-vault $GITHUB_REF_NAME"
+          test "$version" = "kubeconfig-vault $PACKAGE_TAG"
           test "$(readlink "$RUNNER_TEMP/kcv bin/kube-unlock-age")" = kubeconfig-vault
           test "$("$RUNNER_TEMP/kcv bin/kube-unlock-age" --version)" = "$version"
 
@@ -87,6 +122,7 @@ jobs:
           npm run test:browser
 
   draft:
+    if: github.event_name == 'push'
     needs: [test, smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
