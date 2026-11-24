@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,6 +78,7 @@ type service struct {
 	closed                     bool
 	retryAfter                 time.Time // protected by mu
 	stop                       chan struct{}
+	stopOnce                   sync.Once
 }
 
 func (s *service) clearSession() { s.mu.Lock(); s.cache = nil; s.mu.Unlock() }
@@ -151,12 +153,8 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 	if r.Op == "lock" || r.Op == "stop" {
 		result := s.lock(r.Op == "stop")
 		if r.Op == "stop" {
-			time.AfterFunc(100*time.Millisecond, func() {
-				select {
-				case <-s.stop:
-				default:
-					close(s.stop)
-				}
+			s.stopOnce.Do(func() {
+				time.AfterFunc(100*time.Millisecond, func() { close(s.stop) })
 			})
 		}
 		return result, nil
@@ -251,6 +249,9 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		}
 		return s.status(), nil
 	case "export":
+		if err := checkNewOutput(r.Path); err != nil {
+			return nil, err
+		}
 		p, _, err := s.open(ctx, "Export a new plaintext kubeconfig")
 		if err != nil {
 			return nil, err
@@ -272,31 +273,34 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 	}
 }
 
-// A selected snapshot is returned even when its authentication fails, so
-// automatic unlock can apply a prompt cooldown only after vault selection.
 func (s *service) open(ctx context.Context, title string) (*payload, *snapshot, error) {
 	snap, err := loadSnapshot(s.state)
 	if err != nil {
 		return nil, nil, err
 	}
+	p, err := s.authenticateSnapshot(ctx, title, snap)
+	return p, snap, err
+}
+
+func (s *service) authenticateSnapshot(ctx context.Context, title string, snap *snapshot) (*payload, error) {
 	c, err := newCeremony(ctx, title, s.browser, 1)
 	if err != nil {
-		return nil, snap, err
+		return nil, err
 	}
 	ok := false
 	defer func() { c.finish(ok) }()
 	p, err := decryptPayload(snap.Cipher, browserKey{c, snap.Meta.Identity})
 	if err != nil {
-		return nil, snap, c.failure(err)
+		return nil, c.failure(err)
 	}
 	if p.Meta != snap.Meta || !equalProjection(p.Projection, snap.Projection) {
-		return nil, snap, errors.New("vault metadata or generated connection settings changed")
+		return nil, errors.New("vault metadata or generated connection settings changed")
 	}
 	if ctx.Err() != nil {
-		return nil, snap, errors.New("operation cancelled")
+		return nil, errors.New("operation cancelled")
 	}
 	ok = true
-	return p, snap, nil
+	return p, nil
 }
 
 func samePayload(a, b *payload) bool { return reflect.DeepEqual(a, b) }
@@ -575,6 +579,45 @@ func automaticPause(now, until time.Time) error {
 	return fmt.Errorf("automatic unlock paused until %s; run kubeconfig-vault unlock to retry now", until.UTC().Format(time.RFC3339Nano))
 }
 
+var errCredentialBinding = errors.New("credential is not approved for this cluster and TLS configuration")
+
+// The readable client config can rule out a stale request before opening a
+// browser. Only the records from the authenticated vault can authorize delivery.
+func (c config) referencesCredential(id string, requested cluster) bool {
+	var user string
+	for _, u := range c.Users {
+		e := u.User.Exec
+		if e != nil && len(e.Args) >= 2 && e.Args[len(e.Args)-2] == "credential" && e.Args[len(e.Args)-1] == id {
+			user = u.Name
+			break
+		}
+	}
+	if user == "" {
+		return false
+	}
+	names := make(map[string]bool)
+	for _, entry := range c.Clusters {
+		if entry.Cluster == requested {
+			names[entry.Name] = true
+		}
+	}
+	for _, entry := range c.Contexts {
+		if entry.Context.User == user && names[entry.Context.Cluster] {
+			return true
+		}
+	}
+	return false
+}
+
+func boundRecord(records map[string]record, id, clusterBinding string) (record, error) {
+	for _, rec := range records {
+		if rec.ID == id && slices.Contains(rec.Bindings, clusterBinding) {
+			return rec, nil
+		}
+	}
+	return record{}, errCredentialBinding
+}
+
 func (s *service) credential(ctx context.Context, epoch uint64, r request) (any, error) {
 	if r.Cluster == nil || !validID.MatchString(r.ID) || r.Cluster.CAFile != "" || r.Cluster.Insecure {
 		return nil, errors.New("exec request needs an approved cluster and credential ID")
@@ -587,9 +630,26 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		if err := automaticPause(time.Now(), retryAfter); err != nil {
 			return nil, err
 		}
-		p, current, err := s.open(ctx, "A Kubernetes client requested vault access")
+	}
+	requestedBinding := binding(*r.Cluster)
+	if cached == nil {
+		id, err := activeGeneration(s.state)
 		if err != nil {
-			if current != nil && ctx.Err() == nil {
+			return nil, err
+		}
+		current, err := loadGenerationSettings(s.state, id)
+		if err != nil {
+			return nil, err
+		}
+		if !current.Projection.referencesCredential(r.ID, *r.Cluster) {
+			return nil, errCredentialBinding
+		}
+		if err := current.readCipher(s.state); err != nil {
+			return nil, err
+		}
+		p, err := s.authenticateSnapshot(ctx, "A Kubernetes client requested vault access", current)
+		if err != nil {
+			if ctx.Err() == nil {
 				now := time.Now()
 				deadline := retryDeadline(now, err)
 				s.mu.Lock()
@@ -597,6 +657,9 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 				s.mu.Unlock()
 				return nil, fmt.Errorf("%w: %v", err, automaticPause(now, deadline))
 			}
+			return nil, err
+		}
+		if _, err := boundRecord(p.Records, r.ID, requestedBinding); err != nil {
 			return nil, err
 		}
 		if err = s.cachePayload(epoch, p, current.ID); err != nil {
@@ -613,7 +676,6 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		s.clearSession()
 		return nil, err
 	}
-	requestedBinding := binding(*r.Cluster)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked()
@@ -621,20 +683,15 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 	if cached == nil || s.epoch != epoch {
 		return nil, errors.New("session expired or locked")
 	}
-	for _, rec := range cached.Records {
-		if rec.ID == r.ID {
-			for _, approved := range rec.Bindings {
-				if approved == requestedBinding {
-					status, err := rec.execStatus(cached.WallDeadline, time.Now())
-					if err != nil {
-						return nil, err
-					}
-					return map[string]any{"apiVersion": "client.authentication.k8s.io/v1", "kind": "ExecCredential", "status": status}, nil
-				}
-			}
-		}
+	rec, err := boundRecord(cached.Records, r.ID, requestedBinding)
+	if err != nil {
+		return nil, err
 	}
-	return nil, errors.New("credential is not approved for this cluster and TLS configuration")
+	status, err := rec.execStatus(cached.WallDeadline, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"apiVersion": "client.authentication.k8s.io/v1", "kind": "ExecCredential", "status": status}, nil
 }
 
 // Client-go retains a delivered token until this timestamp, independently of the helper.
@@ -647,14 +704,24 @@ func credentialDeadline(token string, sessionEnd, now time.Time) time.Time {
 }
 
 func recoverFile(cipherPath, keyPath, out string) error {
-	key, err := readRecovery(keyPath)
+	if out != "" {
+		if err := checkNewOutput(out); err != nil {
+			return err
+		}
+	}
+	var key *age.HybridIdentity
+	var err error
+	if keyPath == "" {
+		if err := checkBackupInput(cipherPath); err != nil {
+			return err
+		}
+		key, err = promptRecoveryKey()
+	} else {
+		key, err = readRecovery(keyPath)
+	}
 	if err != nil {
 		return err
 	}
-	return recoverWithKey(cipherPath, out, key)
-}
-
-func recoverWithKey(cipherPath, out string, key *age.HybridIdentity) error {
 	p, err := readRecovered(cipherPath, key)
 	if err != nil {
 		return err

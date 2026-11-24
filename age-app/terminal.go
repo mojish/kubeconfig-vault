@@ -60,14 +60,6 @@ func showNewRecoveryKey() ([]byte, error) {
 	return key, nil
 }
 
-func recoverFromTerminal(cipherPath, out string) error {
-	key, err := promptRecoveryKey()
-	if err != nil {
-		return err
-	}
-	return recoverWithKey(cipherPath, out, key)
-}
-
 func promptRecoveryKey() (*age.HybridIdentity, error) {
 	tty, err := recoveryTerminal("--key")
 	if err != nil {

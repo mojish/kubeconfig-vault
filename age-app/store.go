@@ -18,6 +18,8 @@ import (
 
 const maxVault = 32 << 20
 
+const ageHeader = "age-encryption.org/v1\n"
+
 var validID = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 func randomID() string {
@@ -90,6 +92,36 @@ func syncDir(path string) error {
 	return f.Sync()
 }
 
+// A read-only preflight avoids prompting for a destination that is already
+// unusable. The final write still opens the output exclusively.
+func checkNewOutput(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return errors.New("output already exists; choose a new filename")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.New("cannot inspect the output path")
+	}
+	dir, err := os.Stat(filepath.Dir(path))
+	if err != nil || !dir.IsDir() {
+		return errors.New("output directory must already exist")
+	}
+	return nil
+}
+
+// Only inspect the public format marker before asking for a private recovery
+// key. The ordinary decrypt path authenticates the entire selected backup.
+func checkBackupInput(path string) error {
+	f, err := openBounded(path, maxVault, false)
+	if err != nil {
+		return errors.New("cannot open the backup; select an age vault file")
+	}
+	defer f.Close()
+	var header [len(ageHeader)]byte
+	if _, err := io.ReadFull(f, header[:]); err != nil || string(header[:]) != ageHeader {
+		return errors.New("selected file is not an age vault backup")
+	}
+	return nil
+}
+
 // Never overwrite a user's source or recovery file, including through symlinks.
 func writeNew(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
@@ -149,24 +181,29 @@ func currentID(state string) (string, error) {
 	return strings.TrimPrefix(target, "generations/"), nil
 }
 
-func loadSnapshot(state string) (*snapshot, error) {
+func activeGeneration(state string) (string, error) {
 	id, err := currentID(state)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if id == "" {
-		return nil, errors.New("no age vault imported")
+		return "", errors.New("no age vault imported")
+	}
+	return id, nil
+}
+
+func loadSnapshot(state string) (*snapshot, error) {
+	id, err := activeGeneration(state)
+	if err != nil {
+		return nil, err
 	}
 	return loadGeneration(state, id)
 }
 
 func backupGeneration(state, out string) error {
-	id, err := currentID(state)
+	id, err := activeGeneration(state)
 	if err != nil {
 		return err
-	}
-	if id == "" {
-		return errors.New("no age vault imported")
 	}
 	// Resolve current once. A concurrent save publishes another directory,
 	// while an opened file remains readable even if its generation is pruned.
@@ -180,7 +217,7 @@ func backupGeneration(state, out string) error {
 	if err != nil {
 		return err
 	}
-	if !bytes.HasPrefix(cipher, []byte("age-encryption.org/v1\n")) {
+	if !bytes.HasPrefix(cipher, []byte(ageHeader)) {
 		return errors.New("selected generation has no age ciphertext header")
 	}
 	return publishNew(out, cipher)
@@ -191,14 +228,19 @@ func loadGeneration(state, id string) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = age.ParseHybridRecipient(s.Meta.Recovery); err != nil {
-		return nil, errors.New("invalid recovery recipient")
-	}
-	s.Cipher, err = readBounded(filepath.Join(state, "generations", id, "vault.age"), maxVault, true)
-	if err != nil {
+	if err := s.readCipher(state); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *snapshot) readCipher(state string) error {
+	if _, err := age.ParseHybridRecipient(s.Meta.Recovery); err != nil {
+		return errors.New("invalid recovery recipient")
+	}
+	var err error
+	s.Cipher, err = readBounded(filepath.Join(state, "generations", s.ID, "vault.age"), maxVault, true)
+	return err
 }
 
 func loadMetadata(dir, id string) (*snapshot, error) {

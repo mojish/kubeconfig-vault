@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -74,6 +75,41 @@ func TestMissingVaultDoesNotStartPromptCooldown(t *testing.T) {
 	}
 	if _, err := s.handle(context.Background(), req); err == nil || !s.retryAfter.IsZero() {
 		t.Fatal("missing ciphertext should report a file error without delaying the next attempt")
+	}
+}
+
+func TestColdStaleRequestLeavesVaultLocked(t *testing.T) {
+	s, req, _ := warmSession(t)
+	s.clearSession()
+	s.browser = filepath.Join(t.TempDir(), "unused-browser")
+	stale := *req.Cluster
+	stale.TLSName = "previous.example.invalid"
+	for _, old := range []request{
+		{Op: "credential", ID: randomID(), Cluster: req.Cluster},
+		{Op: "credential", ID: req.ID, Cluster: &stale},
+	} {
+		result, err := s.handle(context.Background(), old)
+		if !errors.Is(err, errCredentialBinding) || result != nil || s.cache != nil || !s.retryAfter.IsZero() {
+			t.Fatalf("stale client should fail before authentication: %v", err)
+		}
+	}
+}
+
+func TestCredentialReferenceUsesUserAndClusterTogether(t *testing.T) {
+	p, _ := samplePayload(t)
+	c := p.Projection
+	id := p.Records["demo"].ID
+	first := c.Clusters[0]
+	second := namedCluster{Name: "second", Cluster: cluster{Server: "https://second.invalid"}}
+	c.Clusters = append(c.Clusters, second)
+	c.Contexts = append(c.Contexts, namedContext{Name: "other", Context: contextConfig{User: "other", Cluster: second.Name}})
+	if !c.referencesCredential(id, first.Cluster) || c.referencesCredential(id, second.Cluster) {
+		t.Fatal("reference must match the cluster and user in the same context")
+	}
+	c.Clusters = append(c.Clusters, namedCluster{Name: "alias", Cluster: first.Cluster})
+	c.Contexts[0].Context.Cluster = "alias"
+	if !c.referencesCredential(id, first.Cluster) {
+		t.Fatal("equivalent cluster settings under an alias should still match")
 	}
 }
 

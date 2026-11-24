@@ -48,8 +48,8 @@ const recoveryHelp = `Choose the recovery operation you need
   export NEW-FILE                         Export plaintext with your security key.
 
 For example, run kubeconfig-vault recover cluster-backup.age --check.
-Paste your offline key at the hidden prompt. To use a private key file,
-put --key FILE just after VAULT.age in recover or restore.`
+Paste your offline key at the hidden prompt, or add --key FILE after the
+backup name. For recover, --key can go before or after --check or --out.`
 
 const advancedHelp = `Advanced commands
 

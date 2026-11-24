@@ -24,7 +24,7 @@ sequenceDiagram
     C->>K: HTTPS with a bearer token or mutual TLS
 ```
 
-The client reads an ordinary kubeconfig containing an absolute exec command, cluster settings, and credential IDs. The command talks to a helper over a Unix socket. Both ends verify the peer’s OS user. Concurrent requests share one successful unlock. The helper accepts a request only for a cluster bound to that credential in the authenticated vault.
+The client reads an ordinary kubeconfig containing an absolute exec command, cluster settings, and credential IDs. The command talks to a helper over a Unix socket. Both ends verify the peer’s OS user. Before automatic unlock, the helper checks that the requested ID and cluster settings appear together in a context of the generated client file. This lets it reject stale clients before opening a browser. After approval it verifies the generated settings against the encrypted vault and checks the credential's authenticated cluster binding before starting the shared session. Each delivery checks the binding again.
 
 ## Where the secrets live
 

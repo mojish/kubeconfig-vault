@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestPassiveStatusAbsentVault(t *testing.T) {
@@ -21,6 +25,67 @@ func TestPassiveStatusAbsentVault(t *testing.T) {
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("status created state")
+	}
+}
+
+func TestEndSessionBeforeSetupCreatesNothing(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "new")
+	for _, op := range []string{"lock", "stop"} {
+		if err := run([]string{"--state-dir", state, op}); err != nil {
+			t.Fatalf("%s before setup: %v", op, err)
+		}
+		if _, err := os.Lstat(state); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s created vault state: %v", op, err)
+		}
+	}
+}
+
+func TestEndSessionWithAbandonedSocket(t *testing.T) {
+	dir, err := os.MkdirTemp("", "kcv-st-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	s := service{state: dir}
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: s.socket(), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.endSession("lock"); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.endSession("stop"); err == nil {
+		t.Fatal("reported a stopped session while its daemon lock was held")
+	}
+}
+
+func TestConcurrentStops(t *testing.T) {
+	s := service{state: privateTemp(t), stop: make(chan struct{})}
+	var callers sync.WaitGroup
+	for range 8 {
+		callers.Go(func() {
+			if _, err := s.handle(context.Background(), request{Op: "stop"}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	callers.Wait()
+	select {
+	case <-s.stop:
+	case <-time.After(time.Second):
+		t.Fatal("helper did not receive its stop signal")
 	}
 }
 

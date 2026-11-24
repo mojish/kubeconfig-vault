@@ -24,7 +24,7 @@ Setup and link store the encrypted original next to its target as `FILE.before-k
 | --- | --- |
 | `status [--json]` | Inspect the helper, active generation, and known plaintext edit paths. Works while the helper is stopped. |
 | `unlock` | Authenticate now and start a new credential session, including during an automatic prompt pause. |
-| `lock` / `stop` | Cancel pending authentication and clear the cached session. `stop` also exits the helper. Both preserve open edits. |
+| `lock` / `stop` | Cancel pending authentication and clear the cached session. `stop` also exits the helper. If the helper is already stopped, both commands report any remaining plaintext edit without starting it. Both can run before setup. |
 | `edit` (also `config edit`) | Open a private edit in your editor and attempt to verify and encrypt it when the editor exits successfully. |
 | `config unlock` | Authenticate and create a plaintext file for editing separately. |
 | `config lock [--accept-connection-changes]` | Validate and save the edit, verify the new vault, and remove the plaintext. The flag approves reviewed changes to connection, trust, or user mapping. |
@@ -45,7 +45,9 @@ The editor comes from `VISUAL`, then `EDITOR`, then `vi`. An executable path can
 | `history prune --keep COUNT` | Authenticate and retain the active generation plus the newest others, up to the requested count. An open edit blocks pruning. Separate backups and rollback copies are preserved. |
 | `recovery-key new FILE` / `recovery-key public FILE` | Create a private hybrid age key file, or print its public recipient. Normal setup generates a recovery key for you. |
 
-For `recover` and `restore`, omitting `--key FILE` opens a hidden terminal prompt. File-based recovery identities must belong to you, have private permissions and have no hard links. Backup, recovery and export require unused output filenames. Portable exports embed public CAs and can differ from the original formatting.
+For `recover` and `restore`, omitting `--key FILE` opens a hidden terminal prompt after a basic check of the backup's age header. Decryption with the key verifies the backup. File-based recovery identities must belong to you, have private permissions and have no hard links. With `recover`, the key option can appear before or after `--check` or `--out FILE`.
+
+Backup, recovery and export require unused output filenames. Export and recovery check for an existing entry or a missing parent directory before asking for a key. If a file appears there during approval, the final write preserves it. Prefix a recovery-option filename starting with `--` with `./`, for example `--out ./--example`. Portable exports embed public CAs and can differ from the original formatting.
 
 ## Status and repair
 
