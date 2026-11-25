@@ -146,6 +146,11 @@ func (s *service) startSetup(path, recoveryFile string) error {
 	} else if recoveryFile != "" {
 		return errors.New("this vault already has a recovery key; to resume setup, omit --recovery-key")
 	}
+	if id == "" {
+		fmt.Fprintln(os.Stderr, "Setup will open a local browser page. Use your security key to enroll, encrypt, and verify the vault. Choose Decline request to cancel.")
+	} else if !s.isLinked(entry) {
+		fmt.Fprintln(os.Stderr, "Setup may open a local browser page to verify this vault before linking your kubeconfig. Choose Decline request to cancel.")
+	}
 	if err := s.clientAction(r); err != nil {
 		return err
 	}

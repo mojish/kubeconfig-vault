@@ -436,14 +436,14 @@ func TestInterruptedEditRemainsVisibleAndDiscardable(t *testing.T) {
 
 func TestBootstrapRemovedOnLaunchFailureAndCancellation(t *testing.T) {
 	t.Setenv("TMPDIR", privateTemp(t))
-	if _, err := newCeremony(context.Background(), "synthetic", "/nonexistent-synthetic-browser", 1); err == nil {
+	if _, err := newCeremony(context.Background(), approvalPurpose{Title: "synthetic"}, "/nonexistent-synthetic-browser", 1); err == nil {
 		t.Fatal("invalid launcher accepted")
 	}
 	entries, err := os.ReadDir(os.Getenv("TMPDIR"))
 	if err != nil || len(entries) != 0 {
 		t.Fatal("failed launch left bootstrap behind")
 	}
-	c, err := newCeremony(context.Background(), "synthetic", "/usr/bin/true", 1)
+	c, err := newCeremony(context.Background(), approvalPurpose{Title: "synthetic"}, "/usr/bin/true", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +458,7 @@ func TestBootstrapRemovedOnLaunchFailureAndCancellation(t *testing.T) {
 }
 
 func TestBackgroundTabCanReadCompletionAndCloseListener(t *testing.T) {
-	c, err := newCeremony(context.Background(), "synthetic completion", "/usr/bin/true", 1)
+	c, err := newCeremony(context.Background(), approvalPurpose{Title: "synthetic completion"}, "/usr/bin/true", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestLaunchArgumentsDoNotAuthorizeFileKeyAccess(t *testing.T) {
 	if e := os.WriteFile(launcher, []byte(script), 0700); e != nil {
 		t.Fatal(e)
 	}
-	c, e := newCeremony(context.Background(), "synthetic audit", launcher, 1)
+	c, e := newCeremony(context.Background(), approvalPurpose{Title: "synthetic audit"}, launcher, 1)
 	if e != nil {
 		t.Fatal(e)
 	}

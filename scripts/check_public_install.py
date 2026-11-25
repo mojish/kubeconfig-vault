@@ -83,7 +83,11 @@ class PublicInstall:
         # Only execute the release-attested script. Its downloads get a fresh
         # home and no GitHub authentication. Check bytes before running binaries.
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
-            self.run("sh", "install.sh", directory)
+            if family == "latest":
+                # Stream the exact bytes already verified above to the documented shell.
+                self.run("bash", "-o", "pipefail", "-c", 'cat install.sh | sh -s -- "$1"', "install", directory)
+            else:
+                self.run("sh", "install.sh", directory)
             binary = Path(directory) / "kubeconfig-vault"
             alias = binary.with_name("kube-unlock-age")
             if binary.is_symlink() or not filecmp.cmp(binary, self.root / "expected", shallow=False):

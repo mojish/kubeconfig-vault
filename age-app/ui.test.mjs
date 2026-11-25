@@ -8,10 +8,10 @@ const source = (await readFile(new URL("web/app.mjs", import.meta.url), "utf8"))
   .replace(/^import .* from "age-encryption";\n/, "");
 const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b}); return {promise,resolve,reject}; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const page = {title:"Synthetic enrollment",done:false,request:{id:"synthetic-step",op:"enroll",step:1,total:3}};
+const page = {title:"Synthetic enrollment",reason:"Enroll the disposable vault key.",done:false,request:{id:"synthetic-step",op:"enroll",step:1,total:3}};
 
 async function harness() {
-  const elements = Object.fromEntries(["#title","#message","#progress","#continue","#decline"].map(id => [id,{textContent:"",disabled:true,addEventListener(_,cb){this.click=cb}}]));
+  const elements = Object.fromEntries(["#title","#reason","#decision-hint","#message","#progress","#continue","#decline"].map(id => [id,{textContent:"",disabled:true,addEventListener(_,cb){this.click=cb}}]));
   const auth = deferred(), waiting = []; let interval;
   const context = vm.createContext({document:{querySelector:id=>elements[id]},location:{hash:"#"+"a".repeat(64)},history:{replaceState(){}},
     webauthn:{createCredential:()=>auth.promise},Stanza:class{},Uint8Array,AbortSignal,setTimeout,clearTimeout,
@@ -24,6 +24,13 @@ async function harness() {
   respond(waiting.shift(),page); await running;
   return {elements,auth,waiting,respond,poll:()=>interval?.(),polling:()=>Boolean(interval)};
 }
+
+test("the purpose is visible before approval and declining does not need a key", async () => {
+  const h = await harness();
+  assert.equal(h.elements["#reason"].textContent, page.reason);
+  assert.equal(h.elements["#decline"].disabled, false);
+  assert.equal(h.elements["#continue"].disabled, false);
+});
 
 test("an unchanged step leaves the live status announcement in place",async()=>{
   const h=await harness(), status=h.elements["#message"], text=status.textContent;
@@ -69,6 +76,8 @@ test("decline rejects the active step without calling WebAuthn or reviving an ol
   h.respond(old, page);
   await stale;
   assert.match(h.elements["#message"].textContent, /Request declined/);
+  assert.equal(h.elements["#reason"].hidden, true);
+  assert.equal(h.elements["#decision-hint"].hidden, true);
   assert.equal(h.elements["#continue"].disabled, true);
   assert.equal(h.elements["#decline"].disabled, true);
 });

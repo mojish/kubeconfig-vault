@@ -3,9 +3,10 @@
 <body><main>
 <p class="label">Kubeconfig Vault · On this computer</p>
 <h1 id="title">Connecting…</h1>
+<p id="reason"></p>
 <p id="progress"></p><p id="message" role="status">Waiting for the local vault…</p>
 <button id="continue" disabled>Continue with security key</button>
 <button id="decline" disabled>Decline request</button>
-<p>If you didn’t expect this request, decline it. A Kubernetes app running in the background can request an unlock.</p>
+<p id="decision-hint">Choose <strong>Decline request</strong> if you did not start or expect this operation.</p>
 <p>Enter your PIN only in the browser’s security-key dialog. Your Kubernetes credentials and recovery key stay in the local vault application.</p>
 </main></body></html>

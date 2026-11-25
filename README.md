@@ -13,11 +13,10 @@ Use it on Linux or macOS with a kubeconfig that contains an inline bearer token 
 **1. Install the CLI.** Download the release installer and run it. It selects the binary for your OS and processor and installs it in `~/.local/bin`. The installer shows download, checksum and installation progress.
 
 ```sh
-curl -fL -o install-kubeconfig-vault.sh https://github.com/mojish/kubeconfig-vault/releases/latest/download/install.sh &&
-  sh install-kubeconfig-vault.sh
+curl -fsSL https://github.com/mojish/kubeconfig-vault/releases/latest/download/install.sh | sh
 ```
 
-Want to try a harmless example first? Follow the [offline walkthrough](docs/README.md#try-a-sample-kubeconfig).
+The installer prints `Installed` and the executable path on success. You can also [verify the download before running it](docs/README.md#install-from-downloaded-files) or [practice recovery with a disposable sample](docs/TRIALS.md#hands-on-trial).
 
 **2. Protect your kubeconfig.** Close any editor writing the file, connect your YubiKey, and run:
 

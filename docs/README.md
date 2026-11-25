@@ -4,6 +4,8 @@ Start with [installation and setup](../README.md#install-and-set-up). Use the sa
 
 ## Install from downloaded files
 
+The [quick install](../README.md#install-and-set-up) streams the release installer to `sh`. In Bash or Zsh automation, enable `set -o pipefail` first so a curl error also fails the pipeline. To inspect and verify the installer before execution, follow the steps below.
+
 Download the installer, `SHA256SUMS`, and the archive for your OS and processor from the same [GitHub release](https://github.com/mojish/kubeconfig-vault/releases/latest). Keep all three in one directory. You can [verify the downloaded release](#verify-the-downloaded-release) before installation. From the download directory, run:
 
 ```sh
@@ -36,7 +38,7 @@ kubeconfig-vault setup --check kubeconfig.yaml
 
 Expect **Supported kubeconfig. No files changed.** This checks the local input format without opening a browser, contacting Kubernetes, or creating a vault. The demo names a reserved example domain and contains a dummy token.
 
-To practice real enrollment with the demo, keep it in a short temporary path and give it a separate vault. From the same directory:
+For a guided setup, edit, recovery and unlink with one key and no cluster, follow the [one-terminal recovery trial](TRIALS.md#hands-on-trial). To practice enrollment alone, give the demo its own vault:
 
 ```sh
 demo=$(mktemp -d)
@@ -51,11 +53,11 @@ When you finish, run `kubeconfig-vault --state-dir "$demo/vault" stop` to close 
 
 Use kubectl with the same kubeconfig path you selected during setup. A command that contacts the API server asks the helper for credentials. A local command such as `kubectl config current-context` only reads settings and can succeed while the vault is locked.
 
-Freelens can share the same session when it reads the linked file. If it uses an independently imported copy, point its kubeconfig sync at the linked path and reconnect. Approving one client’s request unlocks the helper for the other. The session expires one hour after approval by default. Requests do not extend it.
+Freelens can share the same session when it reads the linked file. If it uses an independently imported copy, point its kubeconfig sync at the linked path and reconnect. Approving one client’s request unlocks the helper for the other. [See the client approval page](media/client-unlock.png). The session expires one hour after approval by default. Requests do not extend it.
 
 | What you see | What to do |
 | --- | --- |
-| An unexpected unlock page | Choose **Decline request**. Automatic prompts pause for ten minutes. `kubeconfig-vault status` shows the deadline. |
+| An unexpected unlock page | The vault can tell that a local program requested a credential. It cannot tell which app sent it. Approval opens a shared session for local clients. Choose **Decline request** if you did not expect this. Automatic prompts pause for ten minutes. `kubeconfig-vault status` shows the deadline. |
 | You return to the browser after approving | A completed page stops checking the helper. If the page was in the background long enough to lose its final confirmation, check kubectl or Freelens for the result. For an unlock, `kubeconfig-vault status` shows whether the session is active. |
 | A client reports that its credential is not approved for the cluster | Check that it uses the client path selected during setup. An old copy can refer to a previous credential ID, server, or TLS configuration. A locked helper rejects these stale requests before opening the browser. |
 | The browser’s security-key prompt was dismissed | Automatic requests can retry after 30 seconds. Run `kubeconfig-vault unlock` to retry immediately. |

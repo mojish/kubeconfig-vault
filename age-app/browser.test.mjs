@@ -197,6 +197,9 @@ try {
     hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true,hasPrf:true};
   const originalKey = await call("WebAuthn.addVirtualAuthenticator", {options:virtualKeyOptions});
   let navigated=0; const visibleSteps = new Set();
+  // Older published binaries can run the same integration harness.
+  const expectPurpose = !previous && (!process.env.KUBE_UNLOCK_TEST_BINARY || (await cli("help","setup")).includes("enroll, encrypt, and verify"));
+  const seenPurposes = new Map();
   async function complete(operation, buttonId = "continue"){
     await waitFor(async()=>{
       const opened=await urls();
@@ -215,8 +218,21 @@ try {
       }
       if(operation.done)return true;
       if(await evaluate("document.body?.textContent.trim()==='Forbidden'"))throw new Error("Private-file redirect was rejected by HTTP navigation checks");
-      const step=await evaluate(`(()=>{const b=document.getElementById(${JSON.stringify(buttonId)});if(b&&!b.disabled){const step=document.querySelector('#progress').textContent;b.click();return step}})()`);
-      if(step)visibleSteps.add(step);return false;
+      const page=await evaluate(`(()=>{
+        const button=document.getElementById(${JSON.stringify(buttonId)});
+        if (!button || button.disabled) return null;
+        const visible={step:document.querySelector("#progress").innerText, title:document.querySelector("#title").innerText,
+          reason:document.querySelector("#reason")?.innerText, canDecline:!document.querySelector("#decline").disabled};
+        button.click(); return visible;
+      })()`);
+      if (page) {
+        visibleSteps.add(page.step);
+        if (expectPurpose) {
+          assert.ok(page.reason && page.canDecline, "Approval must explain its purpose and offer decline before a key touch");
+          seenPurposes.set(page.title, page.reason);
+        }
+      }
+      return false;
     },"browser operation",operation.waitIterations ?? 500);
     return await operation.promise;
   }
@@ -234,6 +250,10 @@ try {
   await waitFor(() => importing.output.includes("input is hidden"), "hidden confirmation prompt");
   importing.child.stdin.end(savedKey + "\r");
   await successful(importing);
+  if (expectPurpose) {
+    assert.match(importing.output, /Setup will open a local browser page/);
+    assert.match(seenPurposes.get("Create and verify a YubiKey-protected vault"), /encrypt the kubeconfig/);
+  }
   assert.match(importing.stdout,/Security key verified/);
   assert.equal(importing.output.split(savedKey).length - 1, 1, "verification echoed the recovery key");
   await assert.rejects(stat(recovery), { code: "ENOENT" });
@@ -396,6 +416,14 @@ try {
   assert.equal((await urls()).length, beforeDecline + 1);
   await successful(launch(["unlock"]));
   assert.equal(JSON.parse(await cli("status")).automatic_unlock_paused_until, undefined);
+  if (expectPurpose) {
+    const reason = seenPurposes.get("A Kubernetes client requested vault access");
+    assert.match(reason, /cannot identify the app/);
+    assert.match(reason, /local clients request credentials/);
+    assert.match(reason, /Decline request.*10 minutes/);
+    assert.doesNotMatch(reason, /kubectl|freelens/i);
+    assert.match(seenPurposes.get("Unlock credentials for this session"), /requested directly/);
+  }
   console.log("PASS: declining on the vault page rejects both clients and keeps the vault locked.");
 
   // Exercise one long-lived client-go process against the disposable API.
@@ -807,7 +835,8 @@ try {
   // Provision another disposable vault without a controlling terminal.
   state = join(root, "file-key-state");
   const fileKeySource = join(root, "file-key-source");
-  await writeFile(fileKeySource, original, {mode: 0o600});
+  const trialOriginal = await readFile(join(cwd, "../examples/kubeconfig.yaml"));
+  await writeFile(fileKeySource, trialOriginal, {mode: 0o600});
   const pagesBeforeFileKey = (await urls()).length;
   const withKey = launch(["setup", fileKeySource, "--recovery-key", recovery], {detached: true});
   await successful(withKey);
@@ -822,8 +851,27 @@ try {
   assert.notEqual(repeat.code, 0);
   assert.match(repeat.stderr, /already has a recovery key/);
   assert.equal((await urls()).length, pagesBeforeRepeat);
-  await cli("stop");
   console.log("PASS: setup used an existing offline key with browser approval; the same key decrypted the backup.");
+  if (compareBackups) {
+    const trialEditor = join(root, "trial-editor");
+    await writeFile(trialEditor, '#!/bin/sh\nexec "${KUBE_UNLOCK_TEST_KUBECTL:-kubectl}" --kubeconfig "$1" config set-context --current --namespace=practice\n', {mode:0o700});
+    await successful(launch(["edit"], {env:{...process.env, VISUAL:trialEditor}}));
+    const after = join(root, "after-edit.age"), recovered = join(root, "recovered-sample");
+    await cli("backup", after);
+    assert.match(await cli("backup","--compare",after), /matches the current encrypted save/);
+    await cli("lock");
+    const beforeRecovery = (await urls()).length;
+    assert.match(await cli("recover",fileKeyBackup,"--key",recovery,"--check"), /verified/);
+    await cli("recover",after,"--key",recovery,"--out",recovered);
+    const view = spawnSync(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl", ["--kubeconfig", recovered, "config", "view", "--minify", "-o", "jsonpath={.contexts[0].context.namespace}"], {encoding:"utf8"});
+    assert.equal(view.status, 0);
+    assert.equal(view.stdout, "practice");
+    assert.equal((await urls()).length, beforeRecovery, "offline recovery requested a key touch");
+    await successful(launch(["config","unlink","--kubeconfig",fileKeySource]));
+    assert.deepEqual(await readFile(fileKeySource), trialOriginal);
+    console.log("PASS: recovery walkthrough verified the older sample backup, recovered the edited namespace, and unlinked the exact original.");
+  }
+  await cli("stop");
   await call("WebAuthn.removeVirtualAuthenticator",{authenticatorId:replacementKey.authenticatorId});
   // Restore both credential types when the old helper, plaintext export and
   // enrolled authenticator are unavailable. The backup also holds an expired JWT.

@@ -242,7 +242,7 @@ func (s *service) setup(ctx context.Context, r request) (any, error) {
 		cipher, err = s.enroll(ctx, r, p)
 	} else {
 		var snap *snapshot
-		p, snap, err = s.open(ctx, "Verify your vault before connecting this kubeconfig")
+		p, snap, err = s.open(ctx, verifyLinkApproval)
 		if err == nil {
 			cipher = snap.Cipher
 		}
@@ -271,14 +271,14 @@ func (s *service) setup(ctx context.Context, r request) (any, error) {
 			return nil, err
 		}
 		if !same || !bytes.Equal(saved, cipher) {
-			check, err := s.openRollback(ctx, saved, p.Meta)
+			check, err := s.openRollback(ctx, verifyOriginalApproval, saved, p.Meta)
 			if err != nil || check.Source != original.Source || !reflect.DeepEqual(check.Portable, original.Portable) {
 				return nil, errors.New("existing encrypted rollback differs from this original; both preserved")
 			}
 		}
 		cipher = saved
 	} else if !same {
-		c, err := newCeremony(ctx, "Encrypt and verify the original kubeconfig for rollback", s.browser, 2)
+		c, err := newCeremony(ctx, sealOriginalApproval, s.browser, 2)
 		if err != nil {
 			return nil, err
 		}
@@ -345,8 +345,8 @@ func (s *service) setup(ctx context.Context, r request) (any, error) {
 	return fmt.Sprintf("Ready. Your clients can use %s. Encrypted original: %s", r.Path, sealed), nil
 }
 
-func (s *service) openRollback(ctx context.Context, cipher []byte, meta metadata) (*payload, error) {
-	c, err := newCeremony(ctx, "Restore the original kubeconfig", s.browser, 1)
+func (s *service) openRollback(ctx context.Context, purpose approvalPurpose, cipher []byte, meta metadata) (*payload, error) {
+	c, err := newCeremony(ctx, purpose, s.browser, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +423,7 @@ func (s *service) undoSetup(ctx context.Context, alias string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := s.openRollback(ctx, cipher, snap.Meta)
+	p, err := s.openRollback(ctx, restoreOriginalApproval, cipher, snap.Meta)
 	if err != nil {
 		return nil, err
 	}

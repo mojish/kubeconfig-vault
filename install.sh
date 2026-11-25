@@ -1,4 +1,6 @@
 #!/bin/sh
+# With curl | sh, parse the entire group before performing any installation steps.
+{
 set -eu
 
 # The release packager fills this in before generating SHA256SUMS.
@@ -176,3 +178,4 @@ case ":${PATH:-}:" in
     *":$bin_dir:"*) log "Next, run kubeconfig-vault $next_command" ;;
     *) log "To use kubeconfig-vault by name, add $bin_dir to PATH, then run kubeconfig-vault $next_command." ;;
 esac
+}

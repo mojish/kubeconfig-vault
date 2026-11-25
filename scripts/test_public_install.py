@@ -52,6 +52,7 @@ class PublicInstallationTests(unittest.TestCase):
                          [f"{BASE}/download/v1.2.3/{self.check.archive}", f"{BASE}/download/v1.2.3/install.sh",
                           f"{BASE}/latest/download/install.sh"])
         self.assertEqual(sum(x[:3] == ("gh", "release", "verify-asset") for x in calls), 3)
+        self.assertEqual(sum(x[:4] == ("bash", "-o", "pipefail", "-c") for x in calls), 1)
 
     def test_native_release_archives(self):
         for system, machine, target in [
