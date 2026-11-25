@@ -22,3 +22,16 @@ test("slow commands can finish within a shared navigation deadline", async t => 
   t.mock.timers.tick(remainingMs);
   await timeout;
 });
+
+test("only outstanding commands identify an unanswered method", async () => {
+  const child = new EventEmitter();
+  child.stdio = [null, null, null, new PassThrough(), new PassThrough()];
+  const {call} = devtoolsPipe(child);
+  const answered = call("Runtime.evaluate");
+  child.stdio[4].write(JSON.stringify({id:1, error:{code:-32000}}) + "\0");
+  await assert.rejects(answered, error => error.code === -32000 && error.unansweredMethod === undefined);
+  const pending = call("Target.getTargets");
+  child.emit("exit");
+  await assert.rejects(pending, {unansweredMethod:"Target.getTargets"});
+  await assert.rejects(call("Page.reload"), error => error.unansweredMethod === undefined);
+});

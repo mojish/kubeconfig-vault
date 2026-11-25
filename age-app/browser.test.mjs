@@ -84,6 +84,29 @@ try {
     const compiled=spawnSync("go",["build","-race","-o",executable,"."],{cwd,encoding:"utf8",timeout:60000,env:{...process.env,GOTOOLCHAIN:"local",GOPROXY:"off",GOPATH:process.env.GOPATH||join(tmpdir(),"kube-unlock-go-path"),GOCACHE:process.env.GOCACHE||join(tmpdir(),"kube-unlock-go-cache")}});
     if(compiled.status!==0)throw new Error("Native integration build failed: "+compiled.stderr);
   }
+  const fixtureChild = spawn(process.execPath, [join(cwd, "physical.test.mjs"), "--serve-fixture"], {
+    env:{...process.env, KUBE_UNLOCK_TEST_BINARY:executable}, stdio:["ignore", "pipe", "pipe"],
+  });
+  children.push(fixtureChild);
+  const fixture = captureProcess(fixtureChild);
+  const fixturePath = await waitFor(() => {
+    if (fixture.done) throw new Error("Disposable API exited before reporting readiness");
+    return fixture.output.match(/^Disposable kubeconfig: (.+)\n/m)?.[1];
+  }, "disposable API startup", 600);
+  const practiceConfig = join(root, "practice-config");
+  await copyFile(fixturePath, practiceConfig);
+  const practice = spawnSync(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl", [
+    "--kubeconfig", practiceConfig, "--cache-dir", join(root, "practice-cache"),
+    "get", "namespaces", "-o", "name", "--request-timeout=10s",
+  ], {encoding:"utf8", timeout:15000});
+  assert.equal(practice.status, 0, "copied practice config could not reach the disposable API");
+  assert.equal(practice.stdout.trim(), "namespace/vault-test");
+  fixtureChild.kill("SIGTERM");
+  assert.equal((await fixture.promise).code, 0);
+  await assert.rejects(stat(fixturePath), {code:"ENOENT"});
+  await rm(practiceConfig);
+  console.log("PASS: copied trial config reached the disposable API and stopping the fixture removed its source.");
+
   // Keep the generated exec command at the same path across a real upgrade.
   const previous = process.env.KUBE_UNLOCK_TEST_PREVIOUS_BINARY;
   const candidate = join(root, "candidate");
@@ -704,7 +727,15 @@ try {
         const lists = desktop.lists;
         return {namespace:desktop.namespace, received:() => desktop.lists > lists};
       }
-      const desktopOptions = {binary:gui, root, kubeconfig:client, context:"cert", signal:desktopRun.signal};
+      const version = (await cli("--version")).trim();
+      assert.match(version, /^kubeconfig-vault (?:v\d+\.\d+\.\d+|dev)$/);
+      const buildInfo = spawnSync("go", ["version", "-m", executable], {encoding:"utf8", timeout:5000});
+      const appRevision = buildInfo.stdout?.match(/^\s*build\s+vcs\.revision=([0-9a-f]{40})$/m)?.[1];
+      const harness = process.env.KCV_TEST_HARNESS_REVISION || process.env.GITHUB_SHA || "";
+      console.log(`Freelens trial: ${version}, application commit ${appRevision ?? "unreported"}, ` +
+        `harness commit ${/^[0-9a-f]{40}$/.test(harness) ? harness : "unreported"}, ${process.platform}/${process.arch}.`);
+      const desktopOptions = {binary:gui, root, kubeconfig:client, context:"cert",
+        signal:desktopRun.signal, kubectlConnected:certResult.code === 0};
       const session = JSON.parse(await cli("status"));
       const opens = (await urls()).length;
       let reconnect;

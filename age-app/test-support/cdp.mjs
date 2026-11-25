@@ -5,7 +5,10 @@ export function devtoolsPipe(child, {recordEvents = false, getTimeoutMs} = {}) {
   let sequence = 0, buffer = Buffer.alloc(0), closed;
   const close = () => {
     closed = new Error("Browser debugging pipe closed");
-    for (const p of pending.values()) { clearTimeout(p.timer); p.reject(closed); }
+    for (const p of pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(Object.assign(new Error(closed.message), {unansweredMethod:p.method}));
+    }
     pending.clear();
   };
   child.once("exit", close);
@@ -40,9 +43,10 @@ export function devtoolsPipe(child, {recordEvents = false, getTimeoutMs} = {}) {
       const timeoutMs = getTimeoutMs?.();
       const timer = timeoutMs && setTimeout(() => {
         pending.delete(id);
-        reject(new Error(`Browser debugging command ${method} timed out after ${timeoutMs} ms`));
+        const error = new Error(`Browser debugging command ${method} timed out after ${timeoutMs} ms`);
+        reject(Object.assign(error, {unansweredMethod:method}));
       }, timeoutMs);
-      pending.set(id, {resolve, reject, timer});
+      pending.set(id, {resolve, reject, timer, method});
       child.stdio[3].write(JSON.stringify({id, method, params, ...(sessionId ? {sessionId} : {})}) + "\0");
     });
   }

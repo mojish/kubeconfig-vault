@@ -24,7 +24,7 @@ function findInView(label, click, subframe) {
 }
 
 export async function displayNamespace({binary, root, kubeconfig, context, namespace, received,
-  afterFirstView, signal}) {
+  afterFirstView, signal, kubectlConnected, viewTimeoutMs = 85_000}) {
   const home = join(root, "desktop-home");
   const profile = join(home, "profile");
   const config = join(home, ".kube", "config");
@@ -52,8 +52,8 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
   const desktop = spawn(binary, ["--user-data-dir=" + profile, "--remote-debugging-pipe",
     "--disable-background-networking", "--disable-gpu", "--password-store=basic"],
     {env, detached:true, stdio:["ignore","ignore","ignore","pipe","pipe"]});
-  const viewTimeoutMs = 85_000;
-  let deadline = performance.now() + viewTimeoutMs;
+  const started = performance.now();
+  let deadline = started + viewTimeoutMs;
   const {call} = devtoolsPipe(desktop, {
     getTimeoutMs: () => Math.max(1, Math.ceil(deadline - performance.now())),
   });
@@ -71,6 +71,7 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
   const cancel = () => stopGroup("SIGTERM");
   signal.addEventListener("abort", cancel, {once:true});
   let targetId, sessionId, stage = "opening the desktop";
+  let completed = desktop.pid ? "desktop spawned" : "none";
   const clicked = new Map();
   try {
     while (performance.now() < deadline && !exited) {
@@ -84,6 +85,7 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
         if (target.targetId !== targetId) {
           ({sessionId} = await call("Target.attachToTarget", {targetId:target.targetId,flatten:true}));
           targetId = target.targetId;
+          completed = "renderer attached";
           stage = "loading the catalog";
         }
         const view = (method, params) => call(method, params, sessionId);
@@ -109,6 +111,7 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
               }
             }
             clicked.set(label, Date.now());
+            completed = label === context ? "test cluster selected" : label + " selected";
             stage = label === context ? "opening the test cluster" : `opening "${label}"`;
             break;
           }
@@ -123,10 +126,12 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
         // Keep the same process open while the caller verifies renewal. A fresh
         // view must display an API response different from the initial one.
         stage = "checking the approved session";
+        completed = "authenticated namespace displayed";
         const next = await afterFirstView();
         afterFirstView = undefined;
         namespace = next.namespace;
         received = next.received;
+        completed = "session renewed";
         stage = "reloading the open desktop";
         deadline = performance.now() + viewTimeoutMs;
         await call("Page.reload", {ignoreCache:true}, sessionId);
@@ -136,7 +141,12 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
     throw new Error(exited ? "Freelens exited before displaying the authenticated namespace"
       : "Freelens did not display the authenticated namespace before the navigation deadline");
   } catch (error) {
-    throw new Error("Freelens trial stopped while " + stage, {cause:error});
+    // Capture process state before the cleanup signals it.
+    const childState = exited ? "exited" : "running";
+    const elapsed = Math.round(performance.now() - started);
+    throw new Error(`Freelens trial stopped while ${stage} (last completed: ${completed}, ` +
+      `unanswered method: ${error.unansweredMethod ?? "none"}, elapsed: ${elapsed} ms, child: ${childState}, ` +
+      `prior kubectl request: ${kubectlConnected ? "passed" : "unconfirmed"})`, {cause:error});
   } finally {
     signal.removeEventListener("abort", cancel);
     stopGroup("SIGTERM");

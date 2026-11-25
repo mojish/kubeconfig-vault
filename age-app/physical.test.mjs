@@ -17,8 +17,8 @@ const flags = process.argv.slice(2);
 if (new Set(flags).size !== flags.length) throw new Error("Repeat each option at most once");
 const useCertificate = flags.includes("--client-certificate");
 const mode = flags.filter(flag => flag !== "--client-certificate").join(" ");
-if (!["", "--preflight-only", "--keep-key-connected", "--macos-freelens"].includes(mode))
-  throw new Error("Choose --preflight-only, --keep-key-connected, or --macos-freelens");
+if (!["", "--preflight-only", "--keep-key-connected", "--macos-freelens", "--serve-fixture"].includes(mode))
+  throw new Error("Choose --preflight-only, --keep-key-connected, --macos-freelens, or --serve-fixture");
 const preflightOnly = mode === "--preflight-only";
 const macGUI = mode === "--macos-freelens";
 if (macGUI && (process.platform !== "darwin" || !process.env.KUBE_UNLOCK_TEST_BINARY))
@@ -43,7 +43,7 @@ let server, terminal, authenticatedNamespaceLists = 0, rejectedCredentials = 0, 
 const interrupt = () => abort.abort();
 process.on("SIGINT", interrupt);
 process.on("SIGTERM", interrupt);
-const deadline = setTimeout(interrupt, (macGUI ? 30 : 15) * 60_000);
+const deadline = mode === "--serve-fixture" ? undefined : setTimeout(interrupt, (macGUI ? 30 : 15) * 60_000);
 
 function start(command, args, env = process.env) {
   const child = spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -210,7 +210,12 @@ try {
   await assert.rejects(kube(invalidPath, 15_000));
   assert.ok(rejectedCredentials > beforeInvalid, "the fixture must observe a rejected credential");
   console.log(`PASS: kubectl fetched the version and vault-test namespace with ${identity ? "mutual TLS" : "a bearer token"}. The control without valid credentials failed.`);
-  if (!preflightOnly) {
+  if (mode === "--serve-fixture") {
+    stage = "serving the disposable test API";
+    console.log("Disposable kubeconfig:", source);
+    console.log("Copy this file to your test directory. Keep this terminal open during the trial. Press Ctrl-C to stop the API and remove the fixture.");
+    if (!abort.signal.aborted) await once(abort.signal, "abort");
+  } else if (!preflightOnly) {
     stage = "browser startup";
     if (!macGUI) {
       const browser = start(chrome, [...chromeArgs, "--new-window", "about:blank"]);
