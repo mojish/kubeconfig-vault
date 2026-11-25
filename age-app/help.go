@@ -42,6 +42,7 @@ For a walkthrough, run kubeconfig-vault help edit.`
 const recoveryHelp = `Choose the recovery operation you need
 
   backup NEW-FILE                         Save the current encrypted vault.
+  backup --compare FILE                   Compare a backup with the current save.
   recover VAULT.age --check               Check a backup and your offline key.
   restore VAULT.age                       Enroll a security key on a new laptop.
   recover VAULT.age --out NEW-FILE        Write a portable plaintext kubeconfig.
@@ -155,10 +156,15 @@ select your context or namespace again afterward.`
 		message = recoveryHelp
 	case "backup":
 		message = `kubeconfig-vault backup NEW-FILE
+kubeconfig-vault backup --compare FILE
 
 Copy the latest encrypted kubeconfig to a new file. Save any edits you want
 to include before making the backup.
 Keep the backup and your offline recovery key in separate safe places.
+
+Use --compare to check that a file matches the current encrypted save.
+This read-only comparison works while locked. Use recover --check to
+verify that the offline recovery key can decrypt the backup.
 
 To make and check a backup, run
   kubeconfig-vault backup cluster-backup.age

@@ -470,8 +470,15 @@ func run(args []string) error {
 		return s.clientAction(r)
 	}
 	if a[0] == "backup" {
-		if len(a) != 2 {
-			return errors.New("usage: backup NEW-FILE")
+		if len(a) == 3 && a[1] == "--compare" {
+			if err := compareBackup(s.state, a[2]); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stdout, "Backup matches the current encrypted save.")
+			return nil
+		}
+		if len(a) != 2 || a[1] == "--compare" {
+			return errors.New("usage: backup NEW-FILE or backup --compare FILE")
 		}
 		if err := backupGeneration(s.state, a[1]); err != nil {
 			return err
@@ -579,6 +586,9 @@ func run(args []string) error {
 		return err
 	}
 
+	if r.Op == "config-lock" {
+		return reportSavedEdit(result, false)
+	}
 	fmt.Fprintln(os.Stdout, strings.TrimSpace(string(result)))
 	if r.Op == "import" && len(r.RecoveryIdentity) != 0 {
 		fmt.Fprintln(os.Stderr, "Vault created. Use config link to connect clients that use the default kubeconfig.")
