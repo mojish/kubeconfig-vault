@@ -8,11 +8,24 @@ body:
         Use a disposable cluster or the [test fixtures](https://github.com/mojish/kubeconfig-vault/blob/main/docs/COMPATIBILITY.md). Report one attempt, including attempts that stopped early.
         Leave out kubeconfigs, private keys, tokens, PINs, serial numbers, browser URLs, and full logs. Report a suspected vulnerability through [private reporting](https://github.com/mojish/kubeconfig-vault/security/advisories/new).
   - type: input
+    id: application
+    attributes:
+      label: Application release and source commit
+      description: Copy the tag and commit from the binary's release page. If either is unknown, say so.
+      placeholder: v0.5.1, f8e41c4
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Test-source commit (if you used project test scripts)
+      description: Use the commit in the trial guide's archive link or run git rev-parse HEAD in the clean test checkout.
+  - type: input
     id: environment
     attributes:
-      label: Release and environment
+      label: Test environment
       description: Include OS and CPU, browser, client version, and virtual or physical key. For a physical key, the model and connection are enough.
-      placeholder: v0.4.2, Linux x86-64, Chrome 158, kubectl 1.36, virtual USB
+      placeholder: Linux x86-64, Chrome 158, kubectl 1.36, virtual USB
     validations:
       required: true
   - type: dropdown
@@ -36,6 +49,7 @@ body:
         - Freelens desktop and reconnect
         - Recovery from an encrypted backup
         - Restore with a replacement key
+        - First-time setup, edit, recovery and unlink
         - Other
     validations:
       required: true
@@ -53,6 +67,6 @@ body:
     id: observation
     attributes:
       label: What happened?
-      description: Give the last step you reached, what you observed, and the first confusing step, if any. Mention if you needed help.
+      description: Give the last step reached, what you observed, and the first place you needed help. For Mac trials, distinguish download, first launch, and physical approval. Mark any unattempted stage.
     validations:
       required: true

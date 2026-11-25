@@ -42,12 +42,10 @@ The shell installer and a download opened in Finder take different paths through
 
 ## Test kubectl and Freelens
 
-On the same GitHub release page, download **Source code (tar.gz)** and expand it in Downloads. The test script uses helper modules from that source tree. Keep the same Terminal window so `KUBE_UNLOCK_TEST_BINARY` still points to the downloaded executable. A checkout of the matching tag also works. The token trial needs no Go build or npm installation.
+For v0.5.1, keep the same Terminal window and follow [Select the application and test code](TRIALS.md#select-the-application-and-test-code). This keeps the downloaded executable selected while using the pinned, newer test scripts. From the extracted test-source directory, run the token trial below. It needs no Go build or npm installation.
 
 ```sh
-tag=$("$KUBE_UNLOCK_TEST_BINARY" --version | awk '$1 == "kubeconfig-vault" { print $2 }')
-cd "$HOME/Downloads/kubeconfig-vault-${tag#v}" &&
-  node age-app/physical.test.mjs --preflight-only &&
+node age-app/physical.test.mjs --preflight-only &&
   node age-app/physical.test.mjs --macos-freelens
 ```
 
@@ -67,4 +65,4 @@ The test API contains one namespace and no workloads. The current preflight also
 
 ## Report results
 
-Include the tag, Mac CPU, selected archive, macOS version, Chrome, Freelens and kubectl versions, and YubiKey model. Record the first-launch result and whether `vault-test` appeared on both connections. The script’s `PASS`, `SKIP`, `FAIL` or `CANCELLED` lines and the last stage reached are sufficient. Omit keys, PINs, serial numbers, browser URLs, kubeconfigs and full logs.
+Include the binary tag and source commit, the test-source commit, Mac CPU, archive, macOS version, Chrome, Freelens and kubectl versions, and YubiKey model. Record the quarantine and first-launch outcome, then whether physical approval and each authenticated namespace read succeeded. A blocked first launch or an unattempted desktop trial is a reportable outcome. A stage and a short observation are sufficient. Omit keys, PINs, serial numbers, browser URLs, kubeconfigs and full logs.
