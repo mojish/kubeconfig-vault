@@ -11,6 +11,8 @@ let enrolled = false, timer;
 function finish(text, displayed = false) {
   clearInterval(timer);
   finished = true; revision++; active = null;
+  document.querySelector("#reason").hidden = true;
+  document.querySelector("#decision-hint").hidden = true;
   decline.disabled = button.disabled = true; button.textContent = "Session closed"; message.textContent = text;
   if (displayed) void api("/api/poll", {displayed:true}).catch(() => {});
   capability = "";
@@ -32,6 +34,8 @@ async function poll() {
     if (busy || finished || expected !== revision) return;
     const title = document.querySelector("#title");
     if (title.textContent !== page.title) title.textContent = page.title;
+    const reason = document.querySelector("#reason");
+    if (reason.textContent !== page.reason) reason.textContent = page.reason;
     if (page.done) {
       const success = enrolled
         ? "Vault verified. Its non-discoverable credential normally stays hidden in Yubico Authenticator’s Passkeys list. You can close this page."

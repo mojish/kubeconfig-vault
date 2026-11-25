@@ -21,7 +21,7 @@ func (s *service) prune(ctx context.Context, keep int) (any, error) {
 	} else if len(paths) != 0 {
 		return nil, errors.New("finish or discard the open edit before pruning")
 	}
-	_, snapshot, err := s.open(ctx, "Verify your vault before pruning old generations")
+	_, snapshot, err := s.open(ctx, pruneHistoryApproval)
 	if err != nil {
 		return nil, err
 	}

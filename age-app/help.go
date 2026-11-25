@@ -78,7 +78,8 @@ kubeconfig-vault setup --check [FILE]
 Close your kubeconfig editor, connect your security key, then run:
   kubeconfig-vault setup
 
-Save the generated offline recovery key and complete the local browser steps.
+Save the generated offline recovery key. A local browser page will ask you to
+enroll, encrypt, and verify the vault. Choose Decline request to cancel.
 Setup selects ~/.kube/config or the single file named by KUBECONFIG.
 To validate a file without enrollment, run kubeconfig-vault setup --check FILE.
 If you already have a hybrid age key from kubeconfig-vault recovery-key new FILE,

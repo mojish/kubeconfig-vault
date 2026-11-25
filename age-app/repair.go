@@ -122,7 +122,7 @@ func (s *service) repair(ctx context.Context, path string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	c, err := newCeremony(ctx, "Repair the missing linked kubeconfig", s.browser, 1)
+	c, err := newCeremony(ctx, repairLinkApproval, s.browser, 1)
 	if err != nil {
 		return nil, err
 	}

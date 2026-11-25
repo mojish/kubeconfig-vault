@@ -52,6 +52,20 @@ diff "$scratch/expected" "$scratch/calls"
 cmp "$scratch/kube-unlock-age" "$scratch/bin/kubeconfig-vault"
 test "$(readlink "$scratch/bin/kube-unlock-age")" = kubeconfig-vault
 
+# Feed the script through a pipe, as in the README. A truncated download must
+# leave an existing installation untouched, even when only the final line is lost.
+piped="$scratch/pipe bin"
+mkdir "$piped"
+printf 'previous executable\n' > "$piped/kubeconfig-vault"
+if sed '$d' "$installer" | sh -s -- --from-dir "$scratch" "$piped" > "$scratch/out" 2> "$scratch/log"; then exit 1; fi
+test "$(cat "$piped/kubeconfig-vault")" = 'previous executable'
+test ! -e "$piped/kube-unlock-age"
+test ! -s "$scratch/out"
+# shellcheck disable=SC2002 # A pipe is the interface under test.
+cat "$installer" | sh -s -- --from-dir "$scratch" "$piped" > "$scratch/out" 2> "$scratch/log"
+cmp "$scratch/kube-unlock-age" "$piped/kubeconfig-vault"
+test "$(readlink "$piped/kube-unlock-age")" = kubeconfig-vault
+
 # Offline installations also work in directories containing spaces.
 offline="$scratch/local bin"
 PATH="$offline:$PATH" sh "$installer" --from-dir "$scratch" "$offline" > "$scratch/out" 2> "$scratch/log"

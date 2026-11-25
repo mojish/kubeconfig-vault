@@ -191,7 +191,7 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 	case "import":
 		return s.importConfig(ctx, r)
 	case "unlock":
-		p, snap, err := s.open(ctx, "Unlock credentials for this session")
+		p, snap, err := s.open(ctx, manualUnlockApproval)
 		if err != nil {
 			return nil, err
 		}
@@ -209,7 +209,7 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 			return nil, errors.New("a plaintext edit already exists; run kubeconfig-vault status to locate it, then close your editor and run kubeconfig-vault config lock")
 		}
 		s.edit = nil
-		p, snap, err := s.open(ctx, "Unlock a plaintext copy for editing")
+		p, snap, err := s.open(ctx, openEditApproval)
 		if err != nil {
 			return nil, err
 		}
@@ -258,7 +258,7 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 		if err := checkNewOutput(r.Path); err != nil {
 			return nil, err
 		}
-		p, _, err := s.open(ctx, "Export a new plaintext kubeconfig")
+		p, _, err := s.open(ctx, exportConfigApproval)
 		if err != nil {
 			return nil, err
 		}
@@ -279,17 +279,17 @@ func (s *service) handle(parent context.Context, r request) (any, error) {
 	}
 }
 
-func (s *service) open(ctx context.Context, title string) (*payload, *snapshot, error) {
+func (s *service) open(ctx context.Context, purpose approvalPurpose) (*payload, *snapshot, error) {
 	snap, err := loadSnapshot(s.state)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, err := s.authenticateSnapshot(ctx, title, snap)
+	p, err := s.authenticateSnapshot(ctx, purpose, snap)
 	return p, snap, err
 }
 
-func (s *service) authenticateSnapshot(ctx context.Context, title string, snap *snapshot) (*payload, error) {
-	c, err := newCeremony(ctx, title, s.browser, 1)
+func (s *service) authenticateSnapshot(ctx context.Context, purpose approvalPurpose, snap *snapshot) (*payload, error) {
+	c, err := newCeremony(ctx, purpose, s.browser, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +342,7 @@ func (s *service) enroll(ctx context.Context, r request, p *payload) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	c, err := newCeremony(ctx, "Create and verify a YubiKey-protected vault", s.browser, 3)
+	c, err := newCeremony(ctx, enrollVaultApproval, s.browser, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +467,7 @@ func (s *service) saveEdit(ctx context.Context, accept bool) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w; plaintext edit preserved, fix the file and retry kubeconfig-vault config lock", err)
 	}
-	c, err := newCeremony(ctx, "Validate and encrypt your edited kubeconfig", s.browser, 3)
+	c, err := newCeremony(ctx, saveEditApproval, s.browser, 3)
 	if err != nil {
 		return nil, err
 	}
@@ -685,7 +685,7 @@ func (s *service) credential(ctx context.Context, epoch uint64, r request) (any,
 		if err := current.readCipher(s.state); err != nil {
 			return nil, err
 		}
-		p, err := s.authenticateSnapshot(ctx, "A Kubernetes client requested vault access", current)
+		p, err := s.authenticateSnapshot(ctx, clientUnlockApproval, current)
 		if err != nil {
 			if ctx.Err() == nil {
 				now := time.Now()

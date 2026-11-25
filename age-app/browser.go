@@ -44,8 +44,66 @@ type browserMessage struct {
 	Declined bool     `json:"declined,omitempty"`
 	Failed   bool     `json:"failed,omitempty"`
 }
+type approvalPurpose struct {
+	Title  string `json:"title"`
+	Reason string `json:"reason"`
+}
+
+// The helper selects the purpose from the operation it handles. No app identity or
+// other label supplied by a client is shown as the source of an approval.
+var (
+	enrollVaultApproval = approvalPurpose{
+		Title:  "Create and verify a YubiKey-protected vault",
+		Reason: "These three steps create a vault credential on your security key, encrypt the kubeconfig, and check that the key can open it again.",
+	}
+	clientUnlockApproval = approvalPurpose{
+		Title:  "A Kubernetes client requested vault access",
+		Reason: "A program running as your user requested a Kubernetes credential. The vault cannot identify the app. Approving lets local clients request credentials for configured clusters until you lock the vault or the session expires. If this was unexpected, choose Decline request to pause automatic prompts for 10 minutes.",
+	}
+	manualUnlockApproval = approvalPurpose{
+		Title:  "Unlock credentials for this session",
+		Reason: "An unlock was requested directly. Approving starts a shared session for local clients until the vault locks or the session expires.",
+	}
+	openEditApproval = approvalPurpose{
+		Title:  "Unlock a plaintext copy for editing",
+		Reason: "Approving writes a temporary copy of your kubeconfig that contains its credentials so you can edit it.",
+	}
+	saveEditApproval = approvalPurpose{
+		Title:  "Validate and encrypt your edited kubeconfig",
+		Reason: "Approving checks your changes and saves a new encrypted version. After a successful save the vault removes its temporary edit file.",
+	}
+	exportConfigApproval = approvalPurpose{
+		Title:  "Export a new plaintext kubeconfig",
+		Reason: "Approving writes the saved kubeconfig and its credentials to the requested output file.",
+	}
+	verifyLinkApproval = approvalPurpose{
+		Title:  "Verify your vault before connecting this kubeconfig",
+		Reason: "Approving verifies the existing vault before linking the selected kubeconfig to it.",
+	}
+	sealOriginalApproval = approvalPurpose{
+		Title:  "Encrypt and verify the original kubeconfig for rollback",
+		Reason: "Approving protects a copy of the original file so you can restore it when you unlink.",
+	}
+	verifyOriginalApproval = approvalPurpose{
+		Title:  "Verify the original kubeconfig before linking",
+		Reason: "Approving checks the existing encrypted rollback copy against the original file before setup continues.",
+	}
+	restoreOriginalApproval = approvalPurpose{
+		Title:  "Restore the original kubeconfig",
+		Reason: "Approving restores the exact kubeconfig saved during setup, or verifies that it was already restored.",
+	}
+	repairLinkApproval = approvalPurpose{
+		Title:  "Repair the missing linked kubeconfig",
+		Reason: "Approving verifies the encrypted vault before rebuilding the generated client configuration.",
+	}
+	pruneHistoryApproval = approvalPurpose{
+		Title:  "Verify your vault before pruning old generations",
+		Reason: "Approving verifies the active vault before the requested older encrypted saves are removed.",
+	}
+)
+
 type browserPage struct {
-	Title   string          `json:"title"`
+	approvalPurpose
 	Request *browserMessage `json:"request,omitempty"`
 	Done    bool            `json:"done"`
 	Success bool            `json:"success"`
@@ -78,7 +136,7 @@ func (c *ceremony) removeBootstrap() {
 	})
 }
 
-func newCeremony(parent context.Context, title, browser string, steps int) (*ceremony, error) {
+func newCeremony(parent context.Context, purpose approvalPurpose, browser string, steps int) (*ceremony, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	detach := context.AfterFunc(parent, cancel)
 	l, err := net.Listen("tcp4", "127.0.0.1:0")
@@ -87,7 +145,7 @@ func newCeremony(parent context.Context, title, browser string, steps int) (*cer
 		cancel()
 		return nil, errors.New("cannot bind browser loopback listener")
 	}
-	c := &ceremony{ctx: ctx, cancel: cancel, detach: detach, reply: make(chan browserMessage, 1), cap: randomID() + randomID(), page: browserPage{Title: title}, total: steps}
+	c := &ceremony{ctx: ctx, cancel: cancel, detach: detach, reply: make(chan browserMessage, 1), cap: randomID() + randomID(), page: browserPage{approvalPurpose: purpose}, total: steps}
 	c.origin = "http://localhost:" + strings.Split(l.Addr().String(), ":")[1]
 	// Only a private file URI goes through process arguments/desktop launch IPC.
 	// The browser reads the capability under this user's filesystem permissions.
