@@ -10,6 +10,7 @@ threat model and the limitations of client-side locking.
 
 The project is experimental. An independent security assessment is pending.
 Use the tagged release under review, its source commit, and synthetic data.
+For v0.5.1, the [disposable trial kit](docs/TRIALS.md) identifies both the application source and the later test scripts. It provides a loopback API for exercising the published binary, editing a config and recovering a backup. Review the application and release workflow at the application commit, and identify the test-source commit separately in the assessment.
 Include the following areas in the assessment.
 
 | Boundary | What to verify | Source and existing checks |

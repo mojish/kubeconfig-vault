@@ -13,13 +13,15 @@ The public **v0.5.1** installer passed on all four platforms on November 24, 202
 
 **One hour with Freelens open.** All four v0.5.1 desktops stayed open through a real session expiry. Each runner made six fresh kubectl requests at 50, 40, 30, 20, 10 and 1 minute before expiry. Every request kept the original deadline. Two requests after expiry shared one new approval, and the same Freelens window displayed a new namespace from the mutual-TLS API. A separate quit-and-reopen check then required one approval that kubectl reused. [Four native expiry results](https://github.com/mojish/kubeconfig-vault/actions/runs/45416696106)
 
-**First launch on macOS.** Chrome downloaded both v0.5.1 Mac archives and Archive Utility preserved the quarantine attribute on the executable. With Gatekeeper assessments enabled, the first invocation printed the expected version on both hosted Macs. A separate `spctl --assess --type execute` returned exit code 3 on both. The binaries are unnotarized, and managed Mac policies can differ. [Apple Silicon observation](https://github.com/mojish/kubeconfig-vault/actions/runs/45416724761/job/138524841734) · [Intel observation](https://github.com/mojish/kubeconfig-vault/actions/runs/45416724761/job/138524842207) · [Mac trial protocol](MACOS.md)
+**First launch on macOS.** On November 25, Chrome again downloaded both v0.5.1 Mac archives and Archive Utility preserved the quarantine attribute on the executable. With Gatekeeper assessments enabled, the first invocation printed the expected version on both hosted Macs. A separate `spctl --assess --type execute` returned exit code 3 on both. The binaries are unnotarized, and managed Mac policies can differ. [Apple Silicon observation](https://github.com/mojish/kubeconfig-vault/actions/runs/45577527206/job/139079048923) · [Intel observation](https://github.com/mojish/kubeconfig-vault/actions/runs/45577527206/job/139079048968) · [Mac trial protocol](MACOS.md)
 
-**Occasional desktop test timeouts.** A v0.5.0 hosted Intel Mac trial completed its kubectl checks, then timed out loading the Freelens catalog. One isolated Linux v0.5.1 trial timed out before Freelens answered its first debugging request. Two fresh Linux repeats with startup timing enabled completed all 27 checks, including reopening Freelens. The causes remain open. If you see a stall, report whether the catalog appeared and whether kubectl could connect. [Intel trial log](https://github.com/mojish/kubeconfig-vault/actions/runs/45402241683/job/138513828007) · [v0.5.1 hosted desktop results](https://github.com/mojish/kubeconfig-vault/actions/runs/45417266390)
+**Occasional desktop test timeouts.** One hosted v0.5.0 Intel Mac reached the renderer and stalled while loading the catalog. A separate Linux v0.5.1 run stalled on the first debugging request. Subsequent desktop runs passed on all four platforms. The causes remain open. The harness now distinguishes these stages and reports the last completed step, elapsed time, first unanswered debugging method when known, child-process state, and whether kubectl had already reached the fixture. If you observe a stall, include that short diagnostic in the existing issue. [Original observations and investigation](https://github.com/mojish/kubeconfig-vault/issues/35) · [Four-platform repeat with the release binary](https://github.com/mojish/kubeconfig-vault/actions/runs/45575671548)
 
 **Replacing a lost key.** The recovery test removes the original virtual authenticator, moves the old vault aside and removes the plaintext export. An unrelated recovery key is rejected. Restoring the encrypted backup with the correct offline key allows enrollment of a replacement authenticator. A valid bearer token and an embedded certificate then reach the test API after a single unlock. A third, expired token is refused before reaching the API. [Four packaged v0.5.1 recovery runs](https://github.com/mojish/kubeconfig-vault/actions/runs/45414834452)
 
 ## Most valuable next trials
+
+We’re looking for a first-time setup, a physical certificate or Mac desktop trial, and a recovery using a second physical key. Choose one in the [pinned trial kit](TRIALS.md). It supplies a disposable API and asks you to record where you first needed help. A blocked attempt is useful too.
 
 | Trial | How to do it with disposable data | What counts as a pass |
 | --- | --- | --- |
@@ -30,7 +32,7 @@ The public **v0.5.1** installer passed on all four platforms on November 24, 202
 Record one row per attempt, including a blocked or inconclusive result. Use the [compatibility issue form](https://github.com/mojish/kubeconfig-vault/issues/new?template=compatibility.yml), or keep a private report using the line below.
 
 ```text
-Release / OS and CPU / browser / client and version / authenticator model and connection / token or certificate / scenario / passed, blocked or inconclusive / first confusing step
+Application tag and commit / test-source commit if used / OS and CPU / browser / client and version / authenticator model and connection / token or certificate / scenario / passed, blocked or inconclusive / first confusing step
 ```
 
 A stage name and a short redacted error are enough. Leave out credentials, device serial numbers, kubeconfigs, browser URLs and full logs. The independent review has a [separate scope](../SECURITY.md#independent-review-before-v1).
