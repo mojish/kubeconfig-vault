@@ -77,6 +77,8 @@ node age-app/physical.test.mjs --keep-key-connected --client-certificate
 
 The first command makes real kubectl requests against a loopback API that requires the generated client certificate. It also tries a client without the certificate and checks that the request fails. The second uses the same type of API to test enrollment, session reuse and recovery with a physical key.
 
+On Linux with Freelens installed, run `node age-app/physical.test.mjs --linux-freelens --client-certificate` in a disposable desktop account with a physical USB key. Select an alternate executable with `KUBE_UNLOCK_TEST_FREELENS`. Use `KUBE_UNLOCK_TEST_BINARY` to select the release. The harness enrolls the key, links the disposable config, and opens its own Freelens profile. Approve the initial Freelens unlock and the unlock after it reopens. It checks the authenticated namespace in the window each time and verifies that kubectl reuses each approval. The second response carries a new namespace name. The driver controls only the test Freelens window. Enter the PIN in Chrome’s security-key dialog.
+
 The preflight waits for kubectl’s output pipes to close before checking the API response. A failure reports the stage and keeps child output private.
 
 The default test binary is `age-app/kubeconfig-vault`. Set `KUBE_UNLOCK_TEST_BINARY` to verify a specific download. Preflight checks the binary and runs kubectl against a dummy cluster without opening a browser. The hardware run prompts for enrollment and unlock, checks session reuse and offline recovery, and cleans up its temporary data. The key can stay connected throughout.

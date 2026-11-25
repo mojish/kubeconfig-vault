@@ -1,4 +1,5 @@
-// Manual hardware qualification. No DevTools, virtual authenticator, or real config.
+// Manual hardware qualification. The Linux desktop driver controls only the fixture's Freelens window.
+import { displayNamespace } from "./test-support/freelens-desktop.mjs";
 import assert from "node:assert/strict";
 import { dummyAPI } from "./test-support/dummy-api.mjs";
 import { captureProcess } from "./test-support/captured-process.mjs";
@@ -17,13 +18,16 @@ const flags = process.argv.slice(2);
 if (new Set(flags).size !== flags.length) throw new Error("Repeat each option at most once");
 const useCertificate = flags.includes("--client-certificate");
 const mode = flags.filter(flag => flag !== "--client-certificate").join(" ");
-if (!["", "--preflight-only", "--keep-key-connected", "--macos-freelens", "--serve-fixture"].includes(mode))
-  throw new Error("Choose --preflight-only, --keep-key-connected, --macos-freelens, or --serve-fixture");
+if (!["", "--preflight-only", "--keep-key-connected", "--macos-freelens", "--linux-freelens", "--serve-fixture"].includes(mode))
+  throw new Error("Choose --preflight-only, --keep-key-connected, --linux-freelens, --macos-freelens, or --serve-fixture");
 const preflightOnly = mode === "--preflight-only";
 const macGUI = mode === "--macos-freelens";
 if (macGUI && (process.platform !== "darwin" || !process.env.KUBE_UNLOCK_TEST_BINARY))
   throw new Error("--macos-freelens needs macOS and KUBE_UNLOCK_TEST_BINARY pointing to your downloaded executable");
-const keepKeyConnected = macGUI || mode === "--keep-key-connected";
+const linuxGUI = mode === "--linux-freelens";
+if (linuxGUI && process.platform !== "linux") throw new Error("--linux-freelens needs a Linux desktop");
+const desktopTrial = macGUI || linuxGUI;
+const keepKeyConnected = desktopTrial || mode === "--keep-key-connected";
 process.umask(0o077);
 // Keep the Unix-domain socket pathname within macOS's shorter limit.
 const root = await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "kua-physical-"));
@@ -32,7 +36,7 @@ const guiHome = join(root, "home"), source = join(guiHome, ".kube", "config");
 const recovery = join(root, "offline-key");
 const launcher = join(root, macGUI ? "open" : "browser"), launches = join(root, "launches");
 const executable = resolve(process.env.KUBE_UNLOCK_TEST_BINARY || fileURLToPath(new URL("./kubeconfig-vault", import.meta.url)));
-const freelens = process.env.KUBE_UNLOCK_TEST_FREELENS || "/Applications/Freelens.app/Contents/MacOS/Freelens";
+const freelens = process.env.KUBE_UNLOCK_TEST_FREELENS || (linuxGUI ? "freelens" : "/Applications/Freelens.app/Contents/MacOS/Freelens");
 const chrome = process.env.KUBE_UNLOCK_TEST_CHROME || (process.platform === "darwin"
   ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
 const chromeArgs = [`--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check",
@@ -40,10 +44,11 @@ const chromeArgs = [`--user-data-dir=${profile}`, "--no-first-run", "--no-defaul
 const token = useCertificate ? undefined : "synthetic-" + randomBytes(24).toString("hex");
 const children = [], abort = new AbortController();
 let server, terminal, authenticatedNamespaceLists = 0, rejectedCredentials = 0, stage = "preflight";
+let namespace = "vault-test";
 const interrupt = () => abort.abort();
 process.on("SIGINT", interrupt);
 process.on("SIGTERM", interrupt);
-const deadline = mode === "--serve-fixture" ? undefined : setTimeout(interrupt, (macGUI ? 30 : 15) * 60_000);
+const deadline = mode === "--serve-fixture" ? undefined : setTimeout(interrupt, (desktopTrial ? 30 : 15) * 60_000);
 
 function start(command, args, env = process.env) {
   const child = spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -105,6 +110,19 @@ async function waitFor(check, timeout) {
     await delay(250, undefined, { signal: abort.signal });
   }
   throw new Error("stage timed out");
+}
+
+async function showLinuxNamespace(config) {
+  const previousLists = authenticatedNamespaceLists;
+  console.log("WAIT: Approve the unlock requested by Freelens in Chrome. The trial opens Namespaces automatically.");
+  try {
+    await displayNamespace({binary:freelens, root, kubeconfig:config, context:"synthetic", namespace,
+      received:() => authenticatedNamespaceLists > previousLists, signal:abort.signal, kubectlConnected:true});
+  } catch (error) {
+    if (error.message.startsWith("Freelens trial stopped while ")) console.error(error.message);
+    throw error;
+  }
+  console.log("PASS: Freelens displayed " + namespace + " from a freshly authenticated API read.");
 }
 
 async function checkFreelens(reconnect) {
@@ -171,7 +189,7 @@ try {
       return;
     }
     const uri = new URL(req.url, "https://localhost");
-    const result = dummyAPI(req.method, uri.pathname);
+    const result = dummyAPI(req.method, uri.pathname, namespace);
     if (!result) { res.writeHead(404).end(); return; }
     if (uri.searchParams.get("watch") === "true") { res.writeHead(200, { "Content-Type": "application/json" }).end(); return; }
     if (result.kind === "NamespaceList") authenticatedNamespaceLists++;
@@ -246,8 +264,8 @@ try {
     checkProjection(await readFile(join(state, "current", "kubeconfig"), "utf8"));
     assert.ok(await launchCount() === 1, "unexpected enrollment launch count");
     console.log("PASS: physical-key enrollment and native YubiKey/recovery verification completed; dummy source preserved.");
-    const clientConfig = macGUI ? source : join(state, "current", "kubeconfig");
-    if (macGUI) {
+    const clientConfig = desktopTrial ? source : join(state, "current", "kubeconfig");
+    if (desktopTrial) {
       stage = "attaching the test kubeconfig";
       console.log("WAIT: Approve the verification page to connect the temporary kubeconfig to its vault.");
       await cli("setup", source);
@@ -255,13 +273,20 @@ try {
       checkProjection(await readFile(source, "utf8"));
     }
     const beforeCold = await launchCount();
-    stage = "cold kubectl unlock";
-    console.log("WAIT: Approve the Kubernetes client request in the browser. You may leave the key connected throughout this test.");
-    await kube(clientConfig);
+    if (linuxGUI) {
+      stage = "Freelens first connection";
+      assert.ok(JSON.parse(await cli("lock")).fully_locked, "helper did not lock");
+      await showLinuxNamespace(clientConfig);
+    } else {
+      stage = "cold kubectl unlock";
+      console.log("WAIT: Approve the Kubernetes client request in the browser. You may leave the key connected throughout this test.");
+      await kube(clientConfig);
+    }
     const cached = await status(), count = await launchCount();
     assert.ok(cached.unlocked && count === beforeCold + 1, "cold unlock did not establish a session");
     assert.ok(Date.parse(cached.expires_at) - Date.now() > 3500000, "expected one-hour session");
-    console.log("PASS: real kubectl triggered physical-key browser unlock and reached the dummy API.");
+    console.log(linuxGUI ? "PASS: Freelens initiated one physical-key unlock."
+      : "PASS: real kubectl triggered physical-key browser unlock and reached the dummy API.");
     let removed = false;
     if (!keepKeyConnected) {
       stage = "waiting for optional removal check";
@@ -282,6 +307,18 @@ try {
     await kube(clientConfig, 15_000);
     assert.ok(await launchCount() === count && (await status()).expires_at === cached.expires_at, "cache opened a browser or extended its deadline");
     console.log(`PASS: two new kubectl processes reused the session without a new browser or deadline extension (${removed ? "key removal confirmed" : "key left connected"}).`);
+    if (linuxGUI) {
+      stage = "Freelens reconnect after lock";
+      assert.ok(JSON.parse(await cli("lock")).fully_locked, "helper did not lock");
+      namespace = "vault-test-reconnected";
+      server.closeAllConnections();
+      await showLinuxNamespace(clientConfig);
+      const renewed = await status();
+      await kube(clientConfig, 15_000);
+      assert.ok(renewed.unlocked && await launchCount() === count + 1 && (await status()).expires_at === renewed.expires_at,
+        "reopened Freelens and kubectl must share one fresh approval");
+      console.log("PASS: reopened Freelens obtained one new approval and kubectl reused it.");
+    }
     if (macGUI) {
       await checkFreelens(false);
       await checkFreelens(true);

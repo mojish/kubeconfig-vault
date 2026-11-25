@@ -1,7 +1,7 @@
 // Drive only the Electron process launched with the fixture's private profile.
 import { spawn } from "node:child_process";
 import { mkdir, readlink, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { devtoolsPipe } from "./cdp.mjs";
 
@@ -48,8 +48,12 @@ export async function displayNamespace({binary, root, kubeconfig, context, names
   for (const name of ["DISPLAY","XAUTHORITY","TMPDIR","LANG"]) {
     if (process.env[name]) env[name] = process.env[name];
   }
+  // The child has its own runtime directory. Resolve the compositor socket before switching to it.
+  const wayland = process.platform === "linux" && process.env.WAYLAND_DISPLAY && process.env.XDG_RUNTIME_DIR &&
+    (!env.DISPLAY || process.env.XDG_SESSION_TYPE === "wayland");
+  if (wayland) env.WAYLAND_DISPLAY = resolve(process.env.XDG_RUNTIME_DIR, process.env.WAYLAND_DISPLAY);
   signal.throwIfAborted();
-  const desktop = spawn(binary, ["--user-data-dir=" + profile, "--remote-debugging-pipe",
+  const desktop = spawn(binary, [...(wayland ? ["--ozone-platform=wayland"] : []), "--user-data-dir=" + profile, "--remote-debugging-pipe",
     "--disable-background-networking", "--disable-gpu", "--password-store=basic"],
     {env, detached:true, stdio:["ignore","ignore","ignore","pipe","pipe"]});
   const started = performance.now();
