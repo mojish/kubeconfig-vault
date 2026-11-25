@@ -4,14 +4,14 @@ Use a fresh Linux or macOS test account or VM with Chrome, kubectl, Node.js 22.1
 
 ## Select the application and test code
 
-For this trial, use the **v0.5.1 binary** (application commit `f8e41c441168ff68f3cdef6bbb3cb4874b112f56`). The test scripts come from a later commit that includes the output-capture and timeout fixes. Record both commits with your result. [Application release](https://github.com/mojish/kubeconfig-vault/releases/tag/v0.5.1) · [Pinned test source](https://github.com/mojish/kubeconfig-vault/tree/69561023208b805e42943460039540bf692f11e3)
+For this trial, use the **v0.5.1 binary** (application commit `f8e41c441168ff68f3cdef6bbb3cb4874b112f56`). The test scripts come from a later commit that includes the physical Linux desktop trial. Record both commits with your result. [Application release](https://github.com/mojish/kubeconfig-vault/releases/tag/v0.5.1) · [Pinned test source](https://github.com/mojish/kubeconfig-vault/tree/0fa11ccf687f0b135ef825c5772531f946d70bf7)
 
 Follow [Install from downloaded files](README.md#install-from-downloaded-files) using the v0.5.1 assets in the disposable account. Set `export KUBE_UNLOCK_TEST_BINARY="$(command -v kubeconfig-vault)"`. For a Mac browser download, follow the [first-launch steps](MACOS.md#check-the-download-and-first-launch) and keep the executable path they set.
 
 In Terminal 1, unpack the pinned scripts into a new directory. This also works without Git.
 
 ```sh
-export KCV_TEST_HARNESS_REVISION=69561023208b805e42943460039540bf692f11e3
+export KCV_TEST_HARNESS_REVISION=0fa11ccf687f0b135ef825c5772531f946d70bf7
 harness_dir=$(mktemp -d)
 curl -fL -o "$harness_dir/source.tar.gz" \
   "https://github.com/mojish/kubeconfig-vault/archive/$KCV_TEST_HARNESS_REVISION.tar.gz" &&
@@ -22,6 +22,7 @@ curl -fL -o "$harness_dir/source.tar.gz" \
 ## Choose a trial
 
 - **Physical certificate on Linux.** From the pinned source directory, run the two commands below. Go is required to generate the temporary certificate. Preflight checks real kubectl and rejects an invalid control. The second command requests physical approval, checks cache reuse, then checks offline recovery while the helper is locked. The key can stay plugged in throughout.
+- **Physical Linux and Freelens.** Run the certificate preflight below. For the second command, use `node age-app/physical.test.mjs --linux-freelens --client-certificate`. The driver opens the disposable cluster and checks the Namespaces view before and after locking. You only need to approve the security-key prompts. [Linux desktop procedure](DEVELOPMENT.md#test-with-a-physical-yubikey)
 - **Physical Mac and Freelens.** Continue with the [Mac desktop trial](MACOS.md#test-kubectl-and-freelens) from the pinned source. Record the browser download, first launch and physical authentication results individually.
 - **First-time user or replacement key.** Follow the hands-on trial below. Record the first step where you need help, even if you finish.
 
