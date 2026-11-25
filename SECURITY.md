@@ -10,7 +10,7 @@ threat model and the limitations of client-side locking.
 
 The project is experimental. An independent security assessment is pending.
 Use the tagged release under review, its source commit, and synthetic data.
-For v0.5.1, the [disposable trial kit](docs/TRIALS.md) identifies both the application source and the later test scripts. It provides a loopback API for exercising the published binary, editing a config and recovering a backup. Review the application and release workflow at the application commit, and identify the test-source commit separately in the assessment.
+The [disposable trial kit](docs/TRIALS.md) pins the application and test scripts and provides a loopback API for editing and recovery. Review the application and release workflow at the binary’s source commit. Record the test-source commit separately so a later harness can exercise an earlier binary.
 Include the following areas in the assessment.
 
 | Boundary | What to verify | Source and existing checks |
@@ -19,7 +19,7 @@ Include the following areas in the assessment.
 | Authenticated storage | Both recipients recover the enrolled payload. Modified ciphertext, substituted settings and incomplete writes preserve the previous usable vault. | `age-app/store.go`, `service.go`, `setup.go`, `setup_test.go` |
 | Client and daemon | Peer identity, cluster/TLS binding and expiration hold under concurrent requests, explicit lock, cancellation and restart. A client holding a delivered Kubernetes credential is a separate trust boundary. | `age-app/main.go`, `peer_linux.go`, `peer_darwin.go`, `service.go` |
 | Embedded TLS credentials | Verify certificate/key matching, client usage and expiry at delivery. Check that the generated client file, browser requests and errors exclude private key material. The requesting native client receives the key. | [Certificate validation](age-app/client_certificate.go), [mixed-authentication integration](age-app/browser.test.mjs) |
-| Lost-key recovery | With disposable state, change a credential, save, and make a fresh backup. Check offline recovery with the saved key and a real API request, then unlink and compare with the exact original. Record which generation each operation restored. | [Recovery guide](docs/README.md#choose-a-recovery-path), [test protocol](docs/COMPATIBILITY.md#most-valuable-next-trials) |
+| Lost-key recovery | Back up before and after a disposable edit. Compare each backup with the current encrypted generation and verify that the offline key still decrypts both. Use the edited backup for an authenticated API read, then unlink and compare with the exact original. | [Recovery guide](docs/README.md#choose-a-recovery-path), [test protocol](docs/COMPATIBILITY.md#most-valuable-next-trials) |
 | Plaintext editing | Unchanged saves check authenticated state and resolved CA data. Changed/failed saves, concurrent replacements and interrupted cleanup preserve user data and report every open edit. | `age-app/service.go`, `store.go`, `editor.go` |
 | Distribution | Release workflow permissions, pinned tools, attestations, checksums and upgrade aliases match the packages users install. | [Release workflow](.github/workflows/release.yml), [installer](install.sh) |
 

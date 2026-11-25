@@ -4,14 +4,14 @@ Use a fresh Linux or macOS test account or VM with Chrome, kubectl, Node.js 22.1
 
 ## Select the application and test code
 
-For this trial, use the **v0.5.1 binary** (application commit `f8e41c441168ff68f3cdef6bbb3cb4874b112f56`). The test scripts come from a later commit that includes the physical Linux desktop trial. Record both commits with your result. [Application release](https://github.com/mojish/kubeconfig-vault/releases/tag/v0.5.1) · [Pinned test source](https://github.com/mojish/kubeconfig-vault/tree/0fa11ccf687f0b135ef825c5772531f946d70bf7)
+Use the **v0.6.0 binary and test scripts**. Both come from commit `70ca239c885e5d39333698f7594b7a64f49954ae`. Record the application and test revisions separately if you try a different combination. [Application release](https://github.com/mojish/kubeconfig-vault/releases/tag/v0.6.0) · [Pinned test source](https://github.com/mojish/kubeconfig-vault/tree/70ca239c885e5d39333698f7594b7a64f49954ae)
 
-Follow [Install from downloaded files](README.md#install-from-downloaded-files) using the v0.5.1 assets in the disposable account. Set `export KUBE_UNLOCK_TEST_BINARY="$(command -v kubeconfig-vault)"`. For a Mac browser download, follow the [first-launch steps](MACOS.md#check-the-download-and-first-launch) and keep the executable path they set.
+Follow [Install from downloaded files](README.md#install-from-downloaded-files) using the v0.6.0 assets in the disposable account. Set `export KUBE_UNLOCK_TEST_BINARY="$(command -v kubeconfig-vault)"`. For a Mac browser download, follow the [first-launch steps](MACOS.md#check-the-download-and-first-launch) and keep the executable path they set.
 
 In Terminal 1, unpack the pinned scripts into a new directory. This also works without Git.
 
 ```sh
-export KCV_TEST_HARNESS_REVISION=0fa11ccf687f0b135ef825c5772531f946d70bf7
+export KCV_TEST_HARNESS_REVISION=70ca239c885e5d39333698f7594b7a64f49954ae
 harness_dir=$(mktemp -d)
 curl -fL -o "$harness_dir/source.tar.gz" \
   "https://github.com/mojish/kubeconfig-vault/archive/$KCV_TEST_HARNESS_REVISION.tar.gz" &&
@@ -22,7 +22,7 @@ curl -fL -o "$harness_dir/source.tar.gz" \
 ## Choose a trial
 
 - **Physical certificate on Linux.** From the pinned source directory, run the two commands below. Go is required to generate the temporary certificate. Preflight checks real kubectl and rejects an invalid control. The second command requests physical approval, checks cache reuse, then checks offline recovery while the helper is locked. The key can stay plugged in throughout.
-- **Physical Linux and Freelens.** Run the certificate preflight below. For the second command, use `node age-app/physical.test.mjs --linux-freelens --client-certificate`. The driver opens the disposable cluster and checks the Namespaces view before and after locking. You only need to approve the security-key prompts. [Linux desktop procedure](DEVELOPMENT.md#test-with-a-physical-yubikey)
+- **Physical Linux and Freelens.** Run the certificate preflight below. For the second command, use `node age-app/physical.test.mjs --linux-freelens --client-certificate`. Expect four browser pages in order: enroll the key (three steps), link the disposable kubeconfig, approve Freelens, then approve Freelens again after lock and reopen. Enter a PIN only in Chrome’s security-key dialog. The driver opens Namespaces and checks for fresh data each time. [Linux desktop procedure](DEVELOPMENT.md#test-with-a-physical-yubikey)
 - **Physical Mac and Freelens.** Continue with the [Mac desktop trial](MACOS.md#test-kubectl-and-freelens) from the pinned source. Record the browser download, first launch and physical authentication results individually.
 - **First-time user or replacement key.** Follow the hands-on trial below. Record the first step where you need help, even if you finish.
 
@@ -35,7 +35,7 @@ node age-app/physical.test.mjs --preflight-only --client-certificate &&
 
 In Terminal 1, run `node age-app/physical.test.mjs --serve-fixture`. For mutual TLS add `--client-certificate` (requires Go). Leave this terminal open until the trial is finished.
 
-In Terminal 2, use the **same disposable account**. Run `kubeconfig-vault --version` and confirm it prints v0.5.1. If you unpacked the binary manually, add its directory to this terminal’s PATH first. At the prompt below, paste the file **path** printed by Terminal 1.
+In Terminal 2, use the **same disposable account**. Run `kubeconfig-vault --version` and confirm it prints v0.6.0. If you unpacked the binary manually, add its directory to this terminal’s PATH first. At the prompt below, paste the file **path** printed by Terminal 1.
 
 ```sh
 umask 077
@@ -53,8 +53,9 @@ The initial response should contain `namespace/vault-test`. Use the ordinary [se
 | --- | --- |
 | Run `kubeconfig-vault setup` and save the offline recovery key separately. Run `kubectl get namespaces -o name` twice. | The first request opens approval and returns `namespace/vault-test`. The next request reuses the session. |
 | Run `kubeconfig-vault lock` and repeat the request in a fresh kubectl process. | One fresh approval restores access. |
-| Run `kubeconfig-vault edit`. Set the namespace of the current context to `vault-test`, then save and close the editor. | Saving succeeds and `kubectl config view --minify -o 'jsonpath={.contexts[0].context.namespace}'` returns `vault-test`. |
-| Run `kubeconfig-vault backup latest.age`, lock the helper, then run `kubeconfig-vault recover latest.age --check` and `kubeconfig-vault recover latest.age --out recovered`. | With the saved offline key, the recovered file has the edited namespace and `kubectl --kubeconfig recovered get namespaces -o name` reaches the API. The recovered file contains disposable plaintext credentials. |
+| Run `kubeconfig-vault backup before-edit.age`, then `kubeconfig-vault edit`. Set the namespace of the current context to `vault-test` and save. | The CLI reminds you to back up the change. `kubectl config view --minify -o 'jsonpath={.contexts[0].context.namespace}'` returns `vault-test`. |
+| Run `kubeconfig-vault backup --compare before-edit.age`. Create a new backup with `kubeconfig-vault backup latest.age`, then compare it the same way. | The earlier backup differs (exit 1). The fresh backup matches (exit 0). Both checks work without an approval. |
+| Lock the helper. Run `kubeconfig-vault recover before-edit.age --check` and `kubeconfig-vault recover latest.age --out recovered`. | The offline key decrypts both generations. The exported file contains disposable plaintext credentials and the edited namespace. `kubectl --kubeconfig recovered get namespaces -o name` reaches the API. |
 | Run `kubeconfig-vault config unlink --kubeconfig "$KUBECONFIG"`. | `cmp "$fixture" "$KUBECONFIG"` exits successfully. Unlink restores the original bytes from setup. The encrypted backup contains the later edit. |
 
 ### Try a second physical key

@@ -42,7 +42,7 @@ The shell installer and a download opened in Finder take different paths through
 
 ## Test kubectl and Freelens
 
-For v0.5.1, keep the same Terminal window and follow [Select the application and test code](TRIALS.md#select-the-application-and-test-code). This keeps the downloaded executable selected while using the pinned, newer test scripts. From the extracted test-source directory, run the token trial below. It needs no Go build or npm installation.
+Keep the same Terminal window and follow [Select the application and test code](TRIALS.md#select-the-application-and-test-code). This preserves the path to the binary you extracted in Finder while selecting its matching test scripts. From the extracted source directory, run the token trial below. It needs no Go build or npm installation.
 
 ```sh
 node age-app/physical.test.mjs --preflight-only &&
