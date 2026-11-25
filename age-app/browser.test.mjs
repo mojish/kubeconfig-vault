@@ -704,7 +704,15 @@ try {
         const lists = desktop.lists;
         return {namespace:desktop.namespace, received:() => desktop.lists > lists};
       }
-      const desktopOptions = {binary:gui, root, kubeconfig:client, context:"cert", signal:desktopRun.signal};
+      const version = (await cli("--version")).trim();
+      assert.match(version, /^kubeconfig-vault (?:v\d+\.\d+\.\d+|dev)$/);
+      const buildInfo = spawnSync("go", ["version", "-m", executable], {encoding:"utf8", timeout:5000});
+      const appRevision = buildInfo.stdout?.match(/^\s*build\s+vcs\.revision=([0-9a-f]{40})$/m)?.[1];
+      const harness = process.env.KCV_TEST_HARNESS_REVISION || process.env.GITHUB_SHA || "";
+      console.log(`Freelens trial: ${version}, application commit ${appRevision ?? "unreported"}, ` +
+        `harness commit ${/^[0-9a-f]{40}$/.test(harness) ? harness : "unreported"}, ${process.platform}/${process.arch}.`);
+      const desktopOptions = {binary:gui, root, kubeconfig:client, context:"cert",
+        signal:desktopRun.signal, kubectlConnected:certResult.code === 0};
       const session = JSON.parse(await cli("status"));
       const opens = (await urls()).length;
       let reconnect;
