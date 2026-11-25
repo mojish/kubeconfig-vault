@@ -185,6 +185,54 @@ func TestBackupIndependentOfGeneratedConfig(t *testing.T) {
 	}
 }
 
+func TestCompareEncryptedBackupsAcrossSaves(t *testing.T) {
+	state, dir := privateTemp(t), privateTemp(t)
+	p, key := samplePayload(t)
+	var previous string
+	for _, name := range []string{"first", "second"} {
+		p.Portable.Contexts[0].Context.Namespace = name
+		cipher, err := encryptPayload(p, key.Recipient())
+		if err != nil {
+			t.Fatal(err)
+		}
+		previous, err = commitSnapshot(state, previous, p, cipher)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name+".age")
+		if err := run([]string{"--state-dir", state, "backup", path}); err != nil {
+			t.Fatal(err)
+		}
+		if err := run([]string{"--state-dir", state, "backup", "--compare", path}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := filepath.Join(dir, "first.age")
+	if err := run([]string{"--state-dir", state, "backup", "--compare", old}); err == nil || !strings.Contains(err.Error(), "differs") {
+		t.Fatalf("expected a different encrypted save, got %v", err)
+	}
+	for _, name := range []string{"first", "second"} {
+		got, err := readRecovered(filepath.Join(dir, name+".age"), key)
+		if err != nil || got.Portable.Contexts[0].Context.Namespace != name {
+			t.Fatal("both backups must still recover the corresponding edit", err)
+		}
+	}
+	if err := os.Symlink(old, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNew(filepath.Join(dir, "invalid"), []byte("not an age file")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"missing", "invalid", "link"} {
+		if err := compareBackup(state, filepath.Join(dir, name)); err == nil || strings.Contains(err.Error(), "differs") {
+			t.Errorf("expected a read or format error for %s, got %v", name, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(state, "daemon.lock")); !os.IsNotExist(err) {
+		t.Fatal("offline comparison started a helper", err)
+	}
+}
+
 func TestProxyPrivacyAndLegacyRecovery(t *testing.T) {
 	p, key := samplePayload(t)
 	const marker = "SYNTHETIC-PRIVATE-PARAMETER"

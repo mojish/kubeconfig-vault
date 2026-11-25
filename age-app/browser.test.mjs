@@ -495,13 +495,23 @@ try {
   assert.equal(stopped.fully_locked,false);
   assert.equal(stopped.edit_path,edit);
   assert.equal(await readFile(edit,"utf8"),revised);
+  // Older published binaries can still exercise this harness's recovery and desktop trials.
+  const compareBackups = (await cli("help", "backup")).includes("backup --compare");
   const preSaveBackup = join(root,"before-interrupted-save.age");
   await cli("backup",preSaveBackup);
   assert.deepEqual(await readFile(preSaveBackup),initialGeneration);
+  if (compareBackups) {
+    assert.match(await cli("backup","--compare",preSaveBackup), /matches the current encrypted save/);
+    assert.equal(JSON.parse(await cli("status","--json")).helper_running, false);
+  }
   // Let the ordinary retry start a new helper. Stop this detached process
   // even on failure before returning to the suite's foreground helper.
   try {
-    await successful(launch(["config","lock"]));
+    const saved = await successful(launch(["config","lock"]));
+    if (compareBackups) {
+      assert.equal(JSON.parse(saved.stdout).changed, true);
+      assert.match(saved.stderr, /Back up this save/);
+    }
     assert.equal((await urls()).length,beforeCrash + 2);
     acceptedToken=tokenB;
   } finally {
@@ -581,8 +591,15 @@ try {
   const backup = join(root,"separate-backup.age");
   await cli("backup",backup);
   await writeFile(recovery,savedKey+"\n",{mode:0o600});
-  assert.match(await cli("recover",backup,"--key",recovery,"--check"), /verified/);
   const pagesBeforeOfflineRead = (await urls()).length;
+  assert.match(await cli("recover",backup,"--key",recovery,"--check"), /verified/);
+  if (compareBackups) {
+    assert.match(await cli("backup","--compare",backup), /matches the current encrypted save/);
+    const older = await launch(["backup","--compare",preSaveBackup]).promise;
+    assert.equal(older.code, 1);
+    assert.match(older.stderr, /differs from the current encrypted save/);
+    assert.match(await cli("recover",preSaveBackup,"--key",recovery,"--check"), /verified/);
+  }
   const latest = join(root, "latest-offline");
   await cli("recover",backup,"--key",recovery,"--out",latest);
   assert.equal((await kube("synthetic",latest).promise).code, 0, "latest saved backup must authenticate");
@@ -688,6 +705,7 @@ try {
   const editGeneration=await readlink(join(state,"current")), editPages=(await urls()).length;
   const unchanged=await successful(launch(["edit"],{env:{...process.env,VISUAL:editor}}));
   assert.match(unchanged.stdout,/No changes/);
+  assert.doesNotMatch(unchanged.stderr,/Back up this save/);
   assert.equal(await readlink(join(state,"current")),editGeneration);
   assert.equal((await urls()).length,editPages+1);
   assert.deepEqual(await readdir(join(state,"edit")),[]);

@@ -200,27 +200,53 @@ func loadSnapshot(state string) (*snapshot, error) {
 	return loadGeneration(state, id)
 }
 
-func backupGeneration(state, out string) error {
+func currentCiphertext(state string) ([]byte, error) {
 	id, err := activeGeneration(state)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Resolve current once. A concurrent save publishes another directory,
 	// while an opened file remains readable even if its generation is pruned.
 	dir := filepath.Join(state, "generations", id)
 	for _, path := range []string{state, filepath.Dir(dir), dir} {
 		if err := checkPrivateDir(path); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	cipher, err := readBounded(filepath.Join(dir, "vault.age"), maxVault, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !bytes.HasPrefix(cipher, []byte(ageHeader)) {
-		return errors.New("selected generation has no age ciphertext header")
+		return nil, errors.New("selected generation has no age ciphertext header")
+	}
+	return cipher, nil
+}
+
+func backupGeneration(state, out string) error {
+	cipher, err := currentCiphertext(state)
+	if err != nil {
+		return err
 	}
 	return publishNew(out, cipher)
+}
+
+func compareBackup(state, path string) error {
+	cipher, err := currentCiphertext(state)
+	if err != nil {
+		return err
+	}
+	backup, err := readBounded(path, maxVault, false)
+	if err != nil {
+		return err
+	}
+	if !bytes.HasPrefix(backup, []byte(ageHeader)) {
+		return errors.New("selected file is not an age vault backup")
+	}
+	if !bytes.Equal(backup, cipher) {
+		return errors.New("backup differs from the current encrypted save")
+	}
+	return nil
 }
 
 func loadGeneration(state, id string) (*snapshot, error) {

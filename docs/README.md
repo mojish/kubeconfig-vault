@@ -93,6 +93,8 @@ kubeconfig-vault recover cluster-backup.age --check
 
 Choose a new filename for each backup. The first command copies the current encrypted save. The second prompts for your recovery key with input hidden and checks that it can decrypt the backup. Store the backup away from the laptop and the private key separately. The encrypted rollback beside your kubeconfig holds the **original** from setup. Later saves are included in a **new backup**.
 
+After saving an edit, run `kubeconfig-vault backup --compare cluster-backup.age` to see whether your backup matches the current encrypted save. A difference can also mean you selected a backup from another vault. Comparison works while locked and compares only saved changes. Use `kubeconfig-vault recover cluster-backup.age --check` when you want to verify your offline key can decrypt the file.
+
 ## Choose a recovery path
 
 | What happened | Action |

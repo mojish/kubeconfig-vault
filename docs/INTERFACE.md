@@ -43,6 +43,7 @@ Run `kubeconfig-vault help recovery` to choose an operation. Each command has it
 | Command | Output or result |
 | --- | --- |
 | `backup NEW-FILE` | A copy of the current encrypted generation. Can succeed even if the generated client file is damaged. |
+| `backup --compare FILE` | Compare the selected file’s encrypted bytes with the generation active when the comparison starts. Works while locked. Returns 0 for a match and 1 for a difference or read error, with a message identifying the outcome. |
 | `recover VAULT.age [--key FILE] --check` | Verify an encrypted backup and the offline key in memory. |
 | `recover VAULT.age [--key FILE] --out NEW-FILE` | Decrypt a trusted backup into a new portable plaintext kubeconfig. |
 | `restore VAULT.age [--key FILE]` | In an unused state directory, enroll a security key using the trusted backup and its offline key. |
