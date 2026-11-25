@@ -198,7 +198,8 @@ try {
   const originalKey = await call("WebAuthn.addVirtualAuthenticator", {options:virtualKeyOptions});
   let navigated=0; const visibleSteps = new Set();
   // Older published binaries can run the same integration harness.
-  const expectPurpose = !previous && (!process.env.KUBE_UNLOCK_TEST_BINARY || (await cli("help","setup")).includes("enroll, encrypt, and verify"));
+  const expectsApprovalExplanation = async () => !process.env.KUBE_UNLOCK_TEST_BINARY || (await cli("help","setup")).includes("enroll, encrypt, and verify");
+  let expectPurpose = !previous && await expectsApprovalExplanation();
   const seenPurposes = new Map();
   async function complete(operation, buttonId = "continue"){
     await waitFor(async()=>{
@@ -221,8 +222,8 @@ try {
       const page=await evaluate(`(()=>{
         const button=document.getElementById(${JSON.stringify(buttonId)});
         if (!button || button.disabled) return null;
-        const visible={step:document.querySelector("#progress").innerText, title:document.querySelector("#title").innerText,
-          reason:document.querySelector("#reason")?.innerText, canDecline:!document.querySelector("#decline").disabled};
+        const visible={step:document.querySelector("#progress").innerText, title:document.querySelector("#title")?.innerText,
+          reason:document.querySelector("#reason")?.innerText, canDecline:document.querySelector("#decline")?.disabled === false};
         button.click(); return visible;
       })()`);
       if (page) {
@@ -284,6 +285,7 @@ try {
   if (previous) {
     await rm(legacyExecutable);
     await rename(candidate, executable);
+    expectPurpose = await expectsApprovalExplanation();
   } else {
     await rename(legacyExecutable, executable);
   }
