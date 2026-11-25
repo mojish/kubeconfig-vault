@@ -1,6 +1,10 @@
 # What has been tested?
 
-The public **v0.5.1** installer passed on all four platforms on November 24, 2026. Each fresh runner downloaded the matching archive, installed from both the tagged and latest URLs, and checked the executable. The desktop runs used Freelens 2.1.0 and a virtual USB security key in Chrome. [Public release](https://github.com/mojish/kubeconfig-vault/releases/tag/v0.5.1) · [Native installation results](https://github.com/mojish/kubeconfig-vault/actions/runs/45416724761)
+The **v0.6.0** public installer passed on Linux and macOS, on x86-64 and ARM64. Each runner installed the tagged and latest downloads. GitHub also verified build provenance for all six published files. The release tests exercised the packaged CLI, kubectl, virtual-key enrollment, and backup comparison and recovery. [Public install and provenance](https://github.com/mojish/kubeconfig-vault/actions/runs/45599944664) · [Packaged integration tests](https://github.com/mojish/kubeconfig-vault/actions/runs/45598508365)
+
+On the same four platforms, Freelens shared an approved session with kubectl, displayed a new namespace after renewal, and requested a fresh approval after lock and reopen. These v0.6.0 trials used a virtual USB key and a disposable mutual-TLS API. [Desktop run with the published binary](https://github.com/mojish/kubeconfig-vault/actions/runs/45599993372)
+
+The table records the v0.5.1 trials. Physical YubiKey results identify the exact binary and test scripts used.
 
 | Native platform | v0.5.1 public install | v0.5.1 kubectl and Freelens | Physical USB YubiKey |
 | --- | --- | --- | --- |
