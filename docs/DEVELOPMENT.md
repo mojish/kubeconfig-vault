@@ -59,6 +59,8 @@ The trial header identifies the application version and embedded Go build commit
 
 ## Test with a physical YubiKey
 
+For a walkthrough that someone drives themselves, run `node age-app/physical.test.mjs --serve-fixture` from the repo root. Set `KUBE_UNLOCK_TEST_BINARY` to the release executable being tested. The fixture checks real kubectl requests and rejection of invalid credentials, then keeps its loopback API running. The printed path contains a disposable kubeconfig. Copy it to the trial directory before setup. Add `--client-certificate` for mutual TLS. Ctrl-C stops the API and removes the fixture directory. This mode does not enroll a key or launch a browser.
+
 For the real Freelens GUI and Gatekeeper on macOS, use the [Mac test protocol](MACOS.md). For a kubectl hardware run on Linux or macOS, run these from the repo root with the same browser-test prerequisites and a USB security key:
 
 ```sh

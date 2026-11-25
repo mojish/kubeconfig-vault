@@ -84,6 +84,29 @@ try {
     const compiled=spawnSync("go",["build","-race","-o",executable,"."],{cwd,encoding:"utf8",timeout:60000,env:{...process.env,GOTOOLCHAIN:"local",GOPROXY:"off",GOPATH:process.env.GOPATH||join(tmpdir(),"kube-unlock-go-path"),GOCACHE:process.env.GOCACHE||join(tmpdir(),"kube-unlock-go-cache")}});
     if(compiled.status!==0)throw new Error("Native integration build failed: "+compiled.stderr);
   }
+  const fixtureChild = spawn(process.execPath, [join(cwd, "physical.test.mjs"), "--serve-fixture"], {
+    env:{...process.env, KUBE_UNLOCK_TEST_BINARY:executable}, stdio:["ignore", "pipe", "pipe"],
+  });
+  children.push(fixtureChild);
+  const fixture = captureProcess(fixtureChild);
+  const fixturePath = await waitFor(() => {
+    if (fixture.done) throw new Error("Disposable API exited before reporting readiness");
+    return fixture.output.match(/^Disposable kubeconfig: (.+)\n/m)?.[1];
+  }, "disposable API startup", 600);
+  const practiceConfig = join(root, "practice-config");
+  await copyFile(fixturePath, practiceConfig);
+  const practice = spawnSync(process.env.KUBE_UNLOCK_TEST_KUBECTL || "kubectl", [
+    "--kubeconfig", practiceConfig, "--cache-dir", join(root, "practice-cache"),
+    "get", "namespaces", "-o", "name", "--request-timeout=10s",
+  ], {encoding:"utf8", timeout:15000});
+  assert.equal(practice.status, 0, "copied practice config could not reach the disposable API");
+  assert.equal(practice.stdout.trim(), "namespace/vault-test");
+  fixtureChild.kill("SIGTERM");
+  assert.equal((await fixture.promise).code, 0);
+  await assert.rejects(stat(fixturePath), {code:"ENOENT"});
+  await rm(practiceConfig);
+  console.log("PASS: copied trial config reached the disposable API and stopping the fixture removed its source.");
+
   // Keep the generated exec command at the same path across a real upgrade.
   const previous = process.env.KUBE_UNLOCK_TEST_PREVIOUS_BINARY;
   const candidate = join(root, "candidate");
