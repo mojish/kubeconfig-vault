@@ -39,7 +39,7 @@ async function browserDownload() {
      "--password-store=basic", "--use-mock-keychain", "about:blank"],
     {cwd:root, env:clean, stdio:["ignore","ignore","ignore","pipe","pipe"]});
   const stopped = new Promise(resolve => { chrome.once("exit", resolve); chrome.once("error", resolve); });
-  const pipe = devtoolsPipe(chrome, {recordEvents:true, timeoutMs:30000});
+  const pipe = devtoolsPipe(chrome, {recordEvents:true, getTimeoutMs:() => 30_000});
   const call = (method, params, id) => pipe.call(method, params, id).catch(() => {
     throw new Error("The disposable Chrome instance did not complete " + method);
   });
